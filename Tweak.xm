@@ -1,74 +1,63 @@
 #import <Foundation/Foundation.h>
 
-static NSMutableDictionary *taskBuffer;
+@interface HookURLProtocol : NSURLProtocol
+@end
 
-%hook NSObject
+@implementation HookURLProtocol
 
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-   didReceiveData:(NSData *)data
++ (BOOL)canInitWithRequest:(NSURLRequest *)request
 {
-    if (!taskBuffer)
-        taskBuffer = [NSMutableDictionary dictionary];
-
-    NSString *url = dataTask.currentRequest.URL.absoluteString;
+    NSString *url = request.URL.absoluteString;
 
     if ([url containsString:@"/nwgt/web/api/v1/menu/validate"])
     {
-        NSNumber *taskId = @(dataTask.taskIdentifier);
-
-        NSMutableData *buf = taskBuffer[taskId];
-        if (!buf)
-        {
-            buf = [NSMutableData data];
-            taskBuffer[taskId] = buf;
-        }
-
-        [buf appendData:data];
-
-        // 不把真实数据继续往上送
-        return;
+        NSLog(@"[HOOK] intercept validate");
+        return YES;
     }
 
-    %orig;
+    return NO;
 }
 
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request
 {
-    NSString *url = task.currentRequest.URL.absoluteString;
-
-    if ([url containsString:@"/nwgt/web/api/v1/menu/validate"])
-    {
-        NSString *fakeJson =
-        @"{"
-        "\"sing\":null,"
-        "\"data\":null,"
-        "\"code\":0,"
-        "\"message\":\"请求成功\","
-        "\"success\":true,"
-        "\"skey\":null,"
-        "\"timestamp\":1773846248358"
-        "}";
-
-        NSData *fakeData = [fakeJson dataUsingEncoding:NSUTF8StringEncoding];
-
-        NSLog(@"[HOOK] validate api replaced");
-
-        // 直接伪造回调
-        if ([self respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)])
-        {
-            ((void (*)(id, SEL, NSURLSession*, NSURLSessionDataTask*, NSData*))
-            objc_msgSend)(self,
-            @selector(URLSession:dataTask:didReceiveData:),
-            session,
-            (NSURLSessionDataTask *)task,
-            fakeData);
-        }
-    }
-
-    %orig;
+    return request;
 }
 
-%end
+- (void)startLoading
+{
+    NSString *fakeJson =
+    @"{"
+    "\"sing\":null,"
+    "\"data\":null,"
+    "\"code\":0,"
+    "\"message\":\"请求成功\","
+    "\"success\":true,"
+    "\"skey\":null,"
+    "\"timestamp\":1773846248358"
+    "}";
+
+    NSData *data = [fakeJson dataUsingEncoding:NSUTF8StringEncoding];
+
+    NSDictionary *headers =
+    @{
+        @"content-type": @"application/json;charset=UTF-8",
+        @"connection": @"keep-alive"
+    };
+
+    NSHTTPURLResponse *response =
+    [[NSHTTPURLResponse alloc]
+        initWithURL:self.request.URL
+        statusCode:200
+        HTTPVersion:@"HTTP/1.1"
+        headerFields:headers];
+
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:data];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+
+- (void)stopLoading
+{
+}
+
+@end
