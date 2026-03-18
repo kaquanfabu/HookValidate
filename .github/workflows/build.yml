@@ -1,4 +1,4 @@
-name: build
+name: build-dylib
 
 on:
   push:
@@ -9,24 +9,49 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    container:
-      image: ghcr.io/theos/theos:latest
-
     steps:
 
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Build tweak
-        run: make package
+    - name: Install deps
+      run: |
+        sudo apt update
+        sudo apt install -y clang make git perl unzip wget xz-utils
 
-      - name: Upload deb
-        uses: actions/upload-artifact@v4
-        with:
-          name: tweak
-          path: packages/*.deb
+    - name: Install Theos
+      run: |
+        git clone https://github.com/theos/theos.git $HOME/theos
 
-      - name: Upload dylib
-        uses: actions/upload-artifact@v4
-        with:
-          name: dylib
-          path: .theos/obj/debug/*.dylib
+    - name: Install toolchain
+  run: |
+    mkdir -p $HOME/theos/toolchain/linux/iphone
+    cd $HOME/theos/toolchain/linux/iphone
+
+    wget https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma
+
+    tar --lzma -xvf linux-ios-arm64e-clang-toolchain.tar.lzma
+
+    - name: Setup Theos
+      run: |
+        export THEOS=$HOME/theos
+        $THEOS/bin/update-theos
+
+    - name: Install SDK
+      run: |
+        mkdir -p $HOME/theos/sdks
+        cd $HOME/theos/sdks
+        wget https://github.com/theos/sdks/archive/master.zip
+        unzip master.zip
+        mv sdks-master/* .
+        rm -rf master.zip sdks-master
+
+    - name: Build
+      run: |
+        export THEOS=$HOME/theos
+        make
+
+    - name: Upload dylib
+      uses: actions/upload-artifact@v4
+      with:
+        name: dylib
+        path: .theos/obj/debug/*.dylib
