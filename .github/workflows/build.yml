@@ -17,7 +17,15 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y clang make git perl unzip wget
+        sudo apt install -y \
+          clang \
+          make \
+          git \
+          perl \
+          fakeroot \
+          dpkg-dev \
+          unzip \
+          wget
 
     - name: Install Theos
       run: |
