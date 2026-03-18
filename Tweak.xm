@@ -7,18 +7,58 @@
 @property(nonatomic,strong) NSURLSessionDataTask *task;
 @end
 
-
-#pragma mark - 日志窗口
-
 static UITextView *logView = nil;
+
+#pragma mark - 获取Window (兼容iOS9-17)
+
+UIWindow *GetKeyWindow()
+{
+    UIWindow *window = nil;
+
+    if (@available(iOS 13.0, *))
+    {
+        NSSet *scenes = [UIApplication sharedApplication].connectedScenes;
+
+        for (UIScene *scene in scenes)
+        {
+            if (scene.activationState == UISceneActivationStateForegroundActive &&
+                [scene isKindOfClass:[UIWindowScene class]])
+            {
+                UIWindowScene *windowScene = (UIWindowScene *)scene;
+
+                for (UIWindow *w in windowScene.windows)
+                {
+                    if (w.isKeyWindow)
+                    {
+                        window = w;
+                        break;
+                    }
+                }
+            }
+
+            if (window) break;
+        }
+    }
+    else
+    {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        window = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
+    }
+
+    return window;
+}
+
+#pragma mark - UI日志
 
 void InitLogWindow()
 {
     dispatch_async(dispatch_get_main_queue(), ^{
 
-        UIWindow *window = [UIApplication sharedApplication].keyWindow;
-        if (!window)
-            window = [UIApplication sharedApplication].windows.firstObject;
+        UIWindow *window = GetKeyWindow();
+
+        if (!window) return;
 
         logView = [[UITextView alloc] initWithFrame:CGRectMake(10,120,355,260)];
 
@@ -55,7 +95,6 @@ void AppLog(NSString *msg)
         [logView scrollRangeToVisible:bottom];
     });
 }
-
 
 #pragma mark - JSON处理
 
@@ -108,7 +147,6 @@ NSData *ProcessJSON(NSData *data)
     return newData;
 }
 
-
 #pragma mark - NSURLProtocol
 
 @implementation JsonHookProtocol
@@ -117,13 +155,15 @@ NSData *ProcessJSON(NSData *data)
 {
     NSString *url = request.URL.absoluteString;
 
-    if ([url hasPrefix:@"http"])
-    {
-        AppLog([NSString stringWithFormat:@"REQ %@", url]);
-        return YES;
-    }
+    if (![url hasPrefix:@"http"])
+        return NO;
 
-    return NO;
+    if ([NSURLProtocol propertyForKey:@"JsonHooked" inRequest:request])
+        return NO;
+
+    AppLog([NSString stringWithFormat:@"REQ %@", url]);
+
+    return YES;
 }
 
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request
@@ -133,6 +173,13 @@ NSData *ProcessJSON(NSData *data)
 
 - (void)startLoading
 {
+    NSMutableURLRequest *newReq =
+    [self.request mutableCopy];
+
+    [NSURLProtocol setProperty:@YES
+                        forKey:@"JsonHooked"
+                     inRequest:newReq];
+
     NSURLSessionConfiguration *config =
     [NSURLSessionConfiguration defaultSessionConfiguration];
 
@@ -142,7 +189,7 @@ NSData *ProcessJSON(NSData *data)
     __unsafe_unretained typeof(self) weakSelf = self;
 
     self.task =
-    [session dataTaskWithRequest:self.request
+    [session dataTaskWithRequest:newReq
                completionHandler:^(NSData *data,
                                    NSURLResponse *response,
                                    NSError *error)
@@ -172,7 +219,6 @@ NSData *ProcessJSON(NSData *data)
 
 @end
 
-
 #pragma mark - 注入Session
 
 %hook NSURLSessionConfiguration
@@ -191,8 +237,7 @@ NSData *ProcessJSON(NSData *data)
 
 %end
 
-
-#pragma mark - 打印请求
+#pragma mark - 请求日志
 
 %hook NSURLSessionTask
 
@@ -201,19 +246,18 @@ NSData *ProcessJSON(NSData *data)
     NSString *url =
     self.currentRequest.URL.absoluteString;
 
-    AppLog([NSString stringWithFormat:@"TASK %@",url]);
+    AppLog([NSString stringWithFormat:@"TASK %@", url]);
 
     %orig;
 }
 
 %end
 
-
 #pragma mark - 初始化
 
 %ctor
 {
-    NSLog(@"[JSON HOOK] Loaded");
+    NSLog(@"[JsonHook] Loaded");
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),
                    dispatch_get_main_queue(), ^{
