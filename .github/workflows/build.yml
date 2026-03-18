@@ -8,17 +8,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    container:
-      image: ghcr.io/theos/theos:latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build tweak
-        run: make package
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git make clang perl unzip xz-utils curl
 
-      - name: Upload deb
+      - name: Install Theos
+        run: |
+          git clone https://github.com/theos/theos.git $HOME/theos
+          export THEOS=$HOME/theos
+          $THEOS/bin/update-theos
+
+      - name: Build tweak
+        run: |
+          export THEOS=$HOME/theos
+          make
+          make package
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tweak
-          path: packages/*.deb
+          name: build
+          path: |
+            packages/*.deb
+            .theos/obj/debug/*.dylib
