@@ -1,37 +1,64 @@
-name: build
+name: Build HookValidate
 
 on:
-  push:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  THEOS: ""
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
 
     steps:
-      - uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Checkout project
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y git make clang perl unzip xz-utils curl
+          brew install dpkg ldid-procursus make
 
-      - name: Install Theos
+      - name: Checkout Theos
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          path: theos
+          submodules: recursive
+
+      - name: Setup Theos env
         run: |
-          git clone https://github.com/theos/theos.git $HOME/theos
-          export THEOS=$HOME/theos
-          $THEOS/bin/update-theos
+          echo "THEOS=$GITHUB_WORKSPACE/theos" >> $GITHUB_ENV
+          echo "THEOS_PACKAGE_SCHEME=rootless" >> $GITHUB_ENV
+          echo "FINALPACKAGE=1" >> $GITHUB_ENV
+
+      - name: Checkout SDKs
+        uses: actions/checkout@v4
+        with:
+          repository: theos/sdks
+          path: ${{ env.THEOS }}/sdks
 
       - name: Build tweak
         run: |
-          export THEOS=$HOME/theos
-          make
           make package
 
-      - name: Upload artifact
+      - name: Collect artifacts
+        run: |
+          cp packages/*.deb .
+          find .theos/obj -name "*.dylib" -exec cp {} . \;
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build
+          name: HookValidate-build
           path: |
-            packages/*.deb
-            .theos/obj/debug/*.dylib
+            *.deb
+            *.dylib
