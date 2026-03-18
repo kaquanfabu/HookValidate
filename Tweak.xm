@@ -7,7 +7,57 @@
 @property(nonatomic,strong) NSURLSessionDataTask *task;
 @end
 
-#pragma mark - 递归删除JSON字段
+
+#pragma mark - 日志窗口
+
+static UITextView *logView = nil;
+
+void InitLogWindow()
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+
+        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+        if (!window)
+            window = [UIApplication sharedApplication].windows.firstObject;
+
+        logView = [[UITextView alloc] initWithFrame:CGRectMake(10,120,355,260)];
+
+        logView.backgroundColor =
+        [[UIColor blackColor] colorWithAlphaComponent:0.8];
+
+        logView.textColor = UIColor.greenColor;
+        logView.font = [UIFont systemFontOfSize:12];
+        logView.editable = NO;
+
+        logView.layer.cornerRadius = 8;
+        logView.layer.masksToBounds = YES;
+
+        [window addSubview:logView];
+    });
+}
+
+void AppLog(NSString *msg)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+
+        if(!logView) return;
+
+        NSString *old = logView.text ?: @"";
+
+        NSString *newText =
+        [old stringByAppendingFormat:@"\n%@", msg];
+
+        logView.text = newText;
+
+        NSRange bottom =
+        NSMakeRange(newText.length-1,1);
+
+        [logView scrollRangeToVisible:bottom];
+    });
+}
+
+
+#pragma mark - JSON处理
 
 void RemoveKeyRecursive(id obj)
 {
@@ -18,6 +68,7 @@ void RemoveKeyRecursive(id obj)
         if (dict[REMOVE_FIELD])
         {
             [dict removeObjectForKey:REMOVE_FIELD];
+            AppLog(@"remove isFiveVerif");
         }
 
         for (id key in [dict allKeys])
@@ -44,7 +95,7 @@ NSData *ProcessJSON(NSData *data)
                                     options:NSJSONReadingMutableContainers
                                       error:&error];
 
-    if (!json || error)
+    if(!json || error)
         return data;
 
     RemoveKeyRecursive(json);
@@ -54,10 +105,11 @@ NSData *ProcessJSON(NSData *data)
                                     options:0
                                       error:nil];
 
-    NSLog(@"[JSON HOOK] removed key: %s", REMOVE_FIELD);
-
     return newData;
 }
+
+
+#pragma mark - NSURLProtocol
 
 @implementation JsonHookProtocol
 
@@ -67,6 +119,7 @@ NSData *ProcessJSON(NSData *data)
 
     if ([url hasPrefix:@"http"])
     {
+        AppLog([NSString stringWithFormat:@"REQ %@", url]);
         return YES;
     }
 
@@ -86,7 +139,7 @@ NSData *ProcessJSON(NSData *data)
     NSURLSession *session =
     [NSURLSession sessionWithConfiguration:config];
 
-    __weak typeof(self) weakSelf = self;
+    __unsafe_unretained typeof(self) weakSelf = self;
 
     self.task =
     [session dataTaskWithRequest:self.request
@@ -95,16 +148,14 @@ NSData *ProcessJSON(NSData *data)
                                    NSError *error)
     {
 
-        if (data)
-        {
+        if(data)
             data = ProcessJSON(data);
-        }
 
         [weakSelf.client URLProtocol:weakSelf
                  didReceiveResponse:response
                  cacheStoragePolicy:NSURLCacheStorageNotAllowed];
 
-        if (data)
+        if(data)
             [weakSelf.client URLProtocol:weakSelf didLoadData:data];
 
         [weakSelf.client URLProtocolDidFinishLoading:weakSelf];
@@ -122,7 +173,7 @@ NSData *ProcessJSON(NSData *data)
 @end
 
 
-#pragma mark - 注入 Session
+#pragma mark - 注入Session
 
 %hook NSURLSessionConfiguration
 
@@ -130,7 +181,7 @@ NSData *ProcessJSON(NSData *data)
 {
     NSMutableArray *arr = [protocolClasses mutableCopy];
 
-    if (![arr containsObject:[JsonHookProtocol class]])
+    if(![arr containsObject:[JsonHookProtocol class]])
     {
         [arr insertObject:[JsonHookProtocol class] atIndex:0];
     }
@@ -141,13 +192,17 @@ NSData *ProcessJSON(NSData *data)
 %end
 
 
-#pragma mark - 调试打印
+#pragma mark - 打印请求
 
 %hook NSURLSessionTask
 
 - (void)resume
 {
-    NSLog(@"[REQUEST] %@", self.currentRequest.URL);
+    NSString *url =
+    self.currentRequest.URL.absoluteString;
+
+    AppLog([NSString stringWithFormat:@"TASK %@",url]);
+
     %orig;
 }
 
@@ -159,6 +214,13 @@ NSData *ProcessJSON(NSData *data)
 %ctor
 {
     NSLog(@"[JSON HOOK] Loaded");
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{
+
+        InitLogWindow();
+        AppLog(@"JsonHook Loaded");
+    });
 
     [NSURLProtocol registerClass:[JsonHookProtocol class]];
 }
