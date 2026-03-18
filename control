@@ -1,0 +1,9 @@
+Package: com.test.hookvalidate
+Name: HookValidate
+Depends: mobilesubstrate
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Hook validate api
+Maintainer: test
+Author: test
+Section: Tweaks
