@@ -13,7 +13,7 @@ jobs:
 
     - uses: actions/checkout@v4
 
-    - name: Install deps
+    - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y clang make git perl unzip wget
@@ -22,7 +22,12 @@ jobs:
       run: |
         git clone https://github.com/theos/theos.git $HOME/theos
 
-    - name: Install SDK
+    - name: Setup Theos
+      run: |
+        export THEOS=$HOME/theos
+        $THEOS/bin/update-theos
+
+    - name: Install iOS SDK
       run: |
         mkdir -p $HOME/theos/sdks
         cd $HOME/theos/sdks
