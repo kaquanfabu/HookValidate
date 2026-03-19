@@ -109,7 +109,7 @@ NSData *buildFakeData() {
 
 %end
 
-#pragma mark - NSURLSession Delegate (AFNetworking / Alamofire)
+#pragma mark - NSURLSessionTask Delegate (AFNetworking / Alamofire)
 
 %hook NSURLSessionTask
 
@@ -143,37 +143,51 @@ NSData *buildFakeData() {
 
 %end
 
-#pragma mark - NSURLConnection Hook
+#pragma mark - NSURLConnection Hook (delegate)
+
+%hook NSObject
+
+// 拦截 delegate 回调：接收 response
+- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response {
+    if (isTarget(connection.currentRequest)) {
+        NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:response.URL
+                                                                  statusCode:200
+                                                                 HTTPVersion:@"HTTP/1.1"
+                                                                headerFields:@{@"Content-Type": @"application/json;charset=UTF-8"}];
+        [self setValue:newResp forKey:@"_response"];
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked response", connection.currentRequest.URL.absoluteString];
+    }
+    %orig(connection, response);
+}
+
+// 拦截 delegate 回调：接收 data
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
+    if (isTarget(connection.currentRequest)) {
+        NSData *newData = buildFakeData();
+        [self setValue:newData forKey:@"_data"];
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked data", connection.currentRequest.URL.absoluteString];
+        return; // 拦截原始数据
+    }
+    %orig(connection, data);
+}
+
+// 完成回调
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection {
+    if (isTarget(connection.currentRequest)) {
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, finished loading", connection.currentRequest.URL.absoluteString];
+    }
+    %orig(connection);
+}
+
+%end
+
+#pragma mark - NSURLConnection canHandleRequest
 
 %hook NSURLConnection
 
 + (BOOL)canHandleRequest:(NSURLRequest *)request {
     if (isTarget(request)) return YES;
     return %orig;
-}
-
-- (void)start {
-    if (isTarget(self.currentRequest)) {
-        NSData *newData = buildFakeData();
-
-        NSHTTPURLResponse *oldResp = (NSHTTPURLResponse *)self.response;
-        NSDictionary *headers = @{
-            @"Content-Type": @"application/json;charset=UTF-8",
-            @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)newData.length]
-        };
-
-        NSHTTPURLResponse *newResp =
-        [[NSHTTPURLResponse alloc] initWithURL:oldResp.URL
-                                    statusCode:200
-                                   HTTPVersion:@"HTTP/1.1"
-                                  headerFields:headers];
-
-        [self setValue:newData forKey:@"_data"];
-        [self setValue:newResp forKey:@"_response"];
-
-        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@\nResponse: %@", self.currentRequest.URL.absoluteString, [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]];
-    }
-    %orig;
 }
 
 %end
