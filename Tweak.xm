@@ -18,9 +18,10 @@
         CGRect frame = CGRectMake(0, 100, [UIScreen mainScreen].bounds.size.width, 200);
         logger = [[HookLoggerView alloc] initWithFrame:frame];
         logger.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
-        logger.windowLevel = UIWindowLevelAlert + 1;
-        logger.hidden = NO;
+        logger.windowLevel = UIWindowLevelAlert + 1;  // 确保窗口在最上层
+        logger.hidden = NO;  // 默认不隐藏
 
+        // 创建日志显示区域
         logger.textView = [[UITextView alloc] initWithFrame:logger.bounds];
         logger.textView.backgroundColor = [UIColor clearColor];
         logger.textView.textColor = [UIColor greenColor];
@@ -37,6 +38,7 @@
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
 
+    // 确保UI更新在主线程
     dispatch_async(dispatch_get_main_queue(), ^{
         self.textView.text = [self.textView.text stringByAppendingFormat:@"\n%@", msg];
         [self.textView scrollRangeToVisible:NSMakeRange(self.textView.text.length, 1)];
