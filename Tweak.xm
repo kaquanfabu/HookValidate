@@ -169,6 +169,7 @@ void addLogToWindow(NSString *log) {
 
 #pragma mark - Hook NSURLSession（兜底 block）
 
+%hook// 修复后的 Hook NSURLSession 的方法示例：
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
