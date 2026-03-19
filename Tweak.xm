@@ -147,22 +147,6 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
 %end
 
-#pragma mark - Alamofire Hook
-
-%hook Alamofire.SessionDelegate
-
-- (void)urlSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data
-{
-    NSString *url = dataTask.originalRequest.URL.absoluteString;
-
-    NSData *newData = processData(data, dataTask.response, url);
-
-    %orig(session, dataTask, newData);
-}
-
-%end
 
 #pragma mark - AFNetworking Hook
 
