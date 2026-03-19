@@ -168,14 +168,16 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
 #pragma mark - 核心拦截（Alamofire 关键）
 
-%hook%hook NSURLSession
+%hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
+                           completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
 {
     NSString *url = request.URL.absoluteString;
 
-    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
+    // 先保存原 block
+    void (^origBlock)(NSData *, NSURLResponse *, NSError *) =
+    ^(NSData *data, NSURLResponse *response, NSError *error) {
 
         if (!data || ![response isKindOfClass:[NSHTTPURLResponse class]]) {
             completionHandler(data, response, error);
@@ -188,17 +190,15 @@ completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHand
 
             NSData *newData = data;
 
-            // 解 gzip
             NSString *encoding = resp.allHeaderFields[@"Content-Encoding"];
+
             if (encoding && [encoding.lowercaseString containsString:@"gzip"]) {
                 NSData *de = gzipDecompress(data);
                 if (de) newData = de;
             }
 
-            // 替换数据
             newData = buildFakeData();
 
-            // 压回 gzip
             if (encoding && [encoding.lowercaseString containsString:@"gzip"]) {
                 NSData *re = gzipCompress(newData);
                 if (re) newData = re;
@@ -209,11 +209,13 @@ completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHand
         }
 
         completionHandler(data, response, error);
-    });
+    };
+
+    // 再调用 %orig
+    return %orig(request, origBlock);
 }
 
 %end
-
 #pragma mark - 初始化
 
 %ctor {
