@@ -127,7 +127,7 @@ didCompleteWithError:(NSError *)error
         }
 
         NSString *urlString = task.currentRequest.URL.absoluteString;
-        if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"]) {
             long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
             NSDictionary *fixedResponse = @{
