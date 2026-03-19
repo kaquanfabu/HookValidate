@@ -38,22 +38,19 @@ static void RemoveKey(id obj)
 
     id json = [NSJSONSerialization JSONObjectWithData:data options:1 error:nil];
 
-    if(json)
+    if(json && [json isKindOfClass:[NSDictionary class]])
     {
-        // Ensure json is a dictionary before proceeding
-        if ([json isKindOfClass:[NSDictionary class]])
-        {
-            NSMutableDictionary *mutable = [json mutableCopy];
+        // Explicitly cast to NSMutableDictionary
+        NSMutableDictionary *mutable = [json mutableCopy];
 
-            // Ensure RemoveKey is called on a valid mutable dictionary
-            RemoveKey(mutable);
+        // Ensure RemoveKey is called on a valid mutable dictionary
+        RemoveKey(mutable);
 
-            newData = [NSJSONSerialization dataWithJSONObject:mutable options:0 error:nil];
-        }
-        else
-        {
-            NSLog(@"Received JSON is not a dictionary: %@", json);
-        }
+        newData = [NSJSONSerialization dataWithJSONObject:mutable options:0 error:nil];
+    }
+    else
+    {
+        NSLog(@"Error: Received JSON is not a dictionary: %@", json);
     }
 
     %orig(session, task, newData);
