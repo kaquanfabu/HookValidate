@@ -41,7 +41,7 @@ NSData *gzipCompress(NSData *data) {
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
     NSString *url = request.URL.absoluteString;
-    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"]) {
         if ([NSURLProtocol propertyForKey:@"HookHandled" inRequest:request]) {
             return NO; // 避免重复处理
         }
