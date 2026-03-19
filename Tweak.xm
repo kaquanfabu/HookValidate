@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <zlib.h>
+#import <objc/runtime.h>
 
 #pragma mark - gzip
 
@@ -74,11 +75,10 @@ NSData *gzipCompress(NSData *data) {
 
 BOOL isGzip(NSHTTPURLResponse *resp) {
     NSString *e = resp.allHeaderFields[@"Content-Encoding"];
-    if (!e) return NO;
-    return [e.lowercaseString containsString:@"gzip"];
+    return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - fake data
+#pragma mark - fake
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -87,45 +87,83 @@ NSData *buildFakeData(void) {
         @"code": @0,
         @"message": @"请求成功",
         @"success": @YES,
-        @"skey": [NSNull null],
         @"timestamp": @((long long)([[NSDate date] timeIntervalSince1970]*1000))
     };
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - 核心处理
+#pragma mark - 关联对象key
 
-NSData *processData(NSData *data, NSURLResponse *response, NSString *url) {
+static const void *kBufferKey = &kBufferKey;
 
-    if (!data || !response) return data;
+#pragma mark - Hook
 
-    if (![response isKindOfClass:[NSHTTPURLResponse class]]) return data;
+%hook NSObject
 
-    if (![url containsString:@"/menu/validate"]) return data;
+// 🔹 收数据（拼包）
+- (void)urlSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveData:(NSData *)data
+{
+    NSMutableData *buffer = objc_getAssociatedObject(dataTask, kBufferKey);
 
-    NSLog(@"🔥 HIT URL: %@", url);
-
-    NSHTTPURLResponse *resp = (NSHTTPURLResponse *)response;
-
-    NSData *newData = data;
-
-    // 解 gzip
-    if (isGzip(resp)) {
-        NSData *de = gzipDecompress(data);
-        if (de) newData = de;
+    if (!buffer) {
+        buffer = [NSMutableData data];
+        objc_setAssociatedObject(dataTask, kBufferKey, buffer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
-    // 替换
-    newData = buildFakeData();
+    [buffer appendData:data];
 
-    // 压回 gzip
-    if (isGzip(resp)) {
-        NSData *re = gzipCompress(newData);
-        if (re) newData = re;
-    }
-
-    return newData;
+    // ❗这里不改数据
+    %orig(session, dataTask, data);
 }
+
+// 🔥 最终回调（核心改包点）
+- (void)urlSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+didCompleteWithError:(NSError *)error
+{
+    NSMutableData *buffer = objc_getAssociatedObject(task, kBufferKey);
+
+    if (buffer && task.originalRequest) {
+
+        NSString *url = task.originalRequest.URL.absoluteString;
+
+        if ([url containsString:@"/menu/validate"]) {
+
+            NSLog(@"🔥 FINAL HIT %@", url);
+
+            NSData *finalData = buffer;
+
+            if ([task.response isKindOfClass:[NSHTTPURLResponse class]]) {
+
+                NSHTTPURLResponse *resp = (NSHTTPURLResponse *)task.response;
+
+                // 解 gzip
+                if (isGzip(resp)) {
+                    NSData *de = gzipDecompress(buffer);
+                    if (de) finalData = de;
+                }
+
+                // 替换
+                finalData = buildFakeData();
+
+                // 压回 gzip
+                if (isGzip(resp)) {
+                    NSData *re = gzipCompress(finalData);
+                    if (re) finalData = re;
+                }
+            }
+
+            // ❗关键：替换 buffer 内容
+            [buffer setData:finalData];
+        }
+    }
+
+    %orig(session, task, error);
+}
+
+%end
 
 #pragma mark - SSL 绕过
 
@@ -136,7 +174,6 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
 
     if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-
         NSURLCredential *cred = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
         completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
         return;
@@ -147,101 +184,8 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
 %end
 
-
-#pragma mark - AFNetworking Hook
-
-%hook AFURLSessionManager
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            uploadProgress:(void *)uploadProgress
-                          downloadProgress:(void *)downloadProgress
-                         completionHandler:(void (^)(NSURLResponse *, id, NSError *))completionHandler
-{
-    void (^newCompletion)(NSURLResponse *, id, NSError *) =
-    ^(NSURLResponse *response, id responseObject, NSError *error) {
-
-        NSData *data = nil;
-
-        if ([responseObject isKindOfClass:[NSData class]]) {
-            data = responseObject;
-        } else if ([responseObject isKindOfClass:[NSDictionary class]]) {
-            data = [NSJSONSerialization dataWithJSONObject:responseObject options:0 error:nil];
-        }
-
-        NSString *url = request.URL.absoluteString;
-
-        NSData *newData = processData(data, response, url);
-
-        id newObj = newData;
-
-        if (completionHandler)
-            completionHandler(response, newObj, error);
-    };
-
-    return %orig(request, uploadProgress, downloadProgress, newCompletion);
-}
-
-%end
-
-#pragma mark - 通杀 Delegate
-
-%hook NSObject
-
-- (void)urlSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data
-{
-    NSString *cls = NSStringFromClass([self class]);
-
-    if (![cls containsString:@"Delegate"]) {
-        return %orig;
-    }
-
-    NSString *url = dataTask.originalRequest.URL.absoluteString;
-
-    NSData *newData = processData(data, dataTask.response, url);
-
-    %orig(session, dataTask, newData);
-}
-
-%end
-
-#pragma mark - NSURLSession 兜底
-
-%hook NSURLSession
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
-{
-    void (^newBlock)(NSData *, NSURLResponse *, NSError *) =
-    ^(NSData *data, NSURLResponse *response, NSError *error) {
-
-        NSString *url = request.URL.absoluteString;
-
-        NSData *newData = processData(data, response, url);
-
-        if (completionHandler)
-            completionHandler(newData, response, error);
-    };
-
-    return %orig(request, newBlock);
-}
-
-%end
-
-#pragma mark - WebView
-
-%hook WKWebView
-
-- (void)loadRequest:(NSURLRequest *)request {
-    NSLog(@"🌐 WKWebView: %@", request.URL.absoluteString);
-    %orig;
-}
-
-%end
-
 #pragma mark - ctor
 
 %ctor {
-    NSLog(@"[Tweak] ✅ FULL HOOK LOADED");
+    NSLog(@"[Tweak] 🚀 Ultimate Hook Loaded");
 }
