@@ -1,6 +1,53 @@
 #import <Foundation/Foundation.h>
-#import <objc/runtime.h>
 #import <zlib.h>
+
+#pragma mark - gzip 解压
+
+NSData *gzipDecompress(NSData *data) {
+    if (!data || data.length == 0) return data;
+
+    unsigned full_length = (unsigned)data.length;
+    unsigned half_length = (unsigned)data.length / 2;
+
+    NSMutableData *decompressed = [NSMutableData dataWithLength: full_length + half_length];
+
+    BOOL done = NO;
+    int status;
+
+    z_stream strm;
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (unsigned)data.length;
+    strm.total_out = 0;
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+
+    if (inflateInit2(&strm, (15 + 32)) != Z_OK) return nil;
+
+    while (!done) {
+        if (strm.total_out >= decompressed.length)
+            decompressed.length += half_length;
+
+        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
+        strm.avail_out = (unsigned)(decompressed.length - strm.total_out);
+
+        status = inflate(&strm, Z_SYNC_FLUSH);
+
+        if (status == Z_STREAM_END) {
+            done = YES;
+        } else if (status != Z_OK) {
+            break;
+        }
+    }
+
+    if (inflateEnd(&strm) != Z_OK) return nil;
+
+    if (done) {
+        decompressed.length = strm.total_out;
+        return decompressed;
+    }
+
+    return nil;
+}
 
 #pragma mark - gzip 压缩
 
@@ -14,6 +61,7 @@ NSData *gzipCompress(NSData *data) {
                      (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) return nil;
 
     NSMutableData *compressed = [NSMutableData dataWithLength:16384];
+
     strm.next_in = (Bytef *)data.bytes;
     strm.avail_in = (unsigned)data.length;
 
@@ -25,83 +73,125 @@ NSData *gzipCompress(NSData *data) {
         strm.avail_out = (unsigned)(compressed.length - strm.total_out);
 
         deflate(&strm, Z_FINISH);
+
     } while (strm.avail_out == 0);
 
     deflateEnd(&strm);
     compressed.length = strm.total_out;
+
     return compressed;
 }
 
-#pragma mark - 自定义 NSURLProtocol
+#pragma mark - 判断 gzip
 
-@interface HookURLProtocol : NSURLProtocol
-@end
-
-@implementation HookURLProtocol
-
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    NSString *url = request.URL.absoluteString;
-    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"]) {
-        if ([NSURLProtocol propertyForKey:@"HookHandled" inRequest:request]) {
-            return NO; // 避免重复处理
-        }
-        return YES;
-    }
-    return NO;
+BOOL isGzip(NSHTTPURLResponse *response) {
+    NSString *encoding = response.allHeaderFields[@"Content-Encoding"];
+    return [encoding.lowercaseString containsString:@"gzip"];
 }
 
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
+#pragma mark - 目标 URL 判断
+
+BOOL isTarget(NSURLRequest *req) {
+    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"];
 }
 
-- (void)startLoading {
-    NSMutableURLRequest *mutableReq = [self.request mutableCopy];
-    [NSURLProtocol setProperty:@YES forKey:@"HookHandled" inRequest:mutableReq];
+#pragma mark - 构造假数据
 
-    // 构造固定 JSON 响应
+NSData *buildFakeData() {
     long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-    NSDictionary *fixedResponse = @{
-        @"sing"      : [NSNull null],
-        @"data"      : [NSNull null],
-        @"code"      : @0,
-        @"message"   : @"请求成功",
-        @"success"   : @YES,
-        @"skey"      : [NSNull null],
-        @"timestamp" : @(timestamp)
+
+    NSDictionary *fake = @{
+        @"sing": [NSNull null],
+        @"data": [NSNull null],
+        @"code": @0,
+        @"message": @"请求成功",
+        @"success": @YES,
+        @"skey": [NSNull null],
+        @"timestamp": @(timestamp)
     };
 
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
+    return [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
+}
 
-    // 判断是否需要 gzip
-    BOOL shouldGzip = NO;
-    NSString *acceptEncoding = [self.request valueForHTTPHeaderField:@"Accept-Encoding"];
-    if ([acceptEncoding.lowercaseString containsString:@"gzip"]) {
-        shouldGzip = YES;
-        NSData *compressed = gzipCompress(jsonData);
-        if (compressed) jsonData = compressed;
+#pragma mark - NSURLSession (completionHandler)
+
+%hook NSURLSession
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                            completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+
+    if (isTarget(request)) {
+
+        return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
+
+            NSData *newData = buildFakeData();
+
+            if ([response isKindOfClass:NSHTTPURLResponse.class]) {
+                NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+
+                if (isGzip(http)) {
+                    newData = gzipCompress(newData);
+                }
+            }
+
+            completionHandler(newData, response, error);
+        });
     }
 
-    // 构造 HTTP 响应
-    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
-                                                              statusCode:200
-                                                             HTTPVersion:@"HTTP/1.1"
-                                                            headerFields:shouldGzip ? @{@"Content-Encoding": @"gzip"} : nil];
-
-    // 返回数据
-    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-    [self.client URLProtocol:self didLoadData:jsonData];
-    [self.client URLProtocolDidFinishLoading:self];
+    return %orig;
 }
 
-- (void)stopLoading {
-    // 不需要做任何操作
+%end
+
+#pragma mark - Alamofire / Delegate 模式
+
+%hook NSURLSessionDataDelegate
+
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveData:(NSData *)data {
+
+    NSURLRequest *req = dataTask.currentRequest;
+
+    if (isTarget(req)) {
+
+        NSData *newData = buildFakeData();
+
+        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
+
+        if (isGzip(resp)) {
+            newData = gzipCompress(newData);
+        }
+
+        %orig(session, dataTask, newData);
+        return;
+    }
+
+    %orig;
 }
 
-@end
+%end
 
-#pragma mark - 注册 NSURLProtocol
+#pragma mark - SSL Pinning 绕过
 
-__attribute__((constructor))
-static void registerHookProtocol() {
-    [NSURLProtocol registerClass:[HookURLProtocol class]];
+%hook NSURLSession
+
+- (void)URLSession:(NSURLSession *)session
+              didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+                completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *credential))completionHandler {
+
+    NSURLCredential *cred = [[NSURLCredential alloc] initWithTrust:challenge.protectionSpace.serverTrust];
+    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
 }
+
+%end
+
+#pragma mark - 防某些库（AFNetworking）
+
+%hook NSURLConnection
+
++ (BOOL)canHandleRequest:(NSURLRequest *)request {
+    return YES;
+}
+
+%end
