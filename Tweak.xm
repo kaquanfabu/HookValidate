@@ -3,7 +3,6 @@
 #import <zlib.h>
 
 #pragma mark - gzip 解压
-
 NSData *gzipDecompress(NSData *data) {
     if (!data || data.length == 0) return data;
 
@@ -49,7 +48,6 @@ NSData *gzipDecompress(NSData *data) {
 }
 
 #pragma mark - gzip 压缩
-
 NSData *gzipCompress(NSData *data) {
     if (!data || data.length == 0) return data;
 
@@ -82,7 +80,6 @@ NSData *gzipCompress(NSData *data) {
 }
 
 #pragma mark - 判断 gzip
-
 BOOL isGzip(NSHTTPURLResponse *resp) {
     NSString *encoding = resp.allHeaderFields[@"Content-Encoding"];
     if (!encoding) return NO;
@@ -90,7 +87,6 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
 }
 
 #pragma mark - 生成假数据
-
 NSData *buildFakeData(void) {
     NSDictionary *fake = @{
         @"code": @0,
@@ -142,16 +138,17 @@ NSData *buildFakeData(void) {
 }
 
 - (void)addLog:(NSString *)log {
-    self.textView.text = [self.textView.text stringByAppendingFormat:@"%@\n", log];
-    // 保持滚动条在底部
-    NSRange range = NSMakeRange(self.textView.text.length, 0);
-    [self.textView scrollRangeToVisible:range];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.textView.text = [self.textView.text stringByAppendingFormat:@"%@\n", log];
+        // 保持滚动条在底部
+        NSRange range = NSMakeRange(self.textView.text.length, 0);
+        [self.textView scrollRangeToVisible:range];
+    });
 }
 
 @end
 
 #pragma mark - 初始化 LogWindow
-
 static LogWindow *logWindow = nil;
 
 void initLogWindow() {
@@ -167,56 +164,16 @@ void addLogToWindow(NSString *log) {
     }
 }
 
-#pragma mark - Hook NSURLSession（兜底 block）
+#pragma mark - NSURLSession Hook
 
-%hook// 修复后的 Hook NSURLSession 的方法示例：
-%hook NSURLSession
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                           completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
-{
-    NSLog(@"[Hook-Block] %@", request.URL.absoluteString);
-    addLogToWindow([NSString stringWithFormat:@"[Block] %@", request.URL.absoluteString]);  // 添加日志
-
-    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (data && [response isKindOfClass:[NSHTTPURLResponse class]]) {
-            NSHTTPURLResponse *resp = (NSHTTPURLResponse *)response;
-            NSData *newData = data;
-
-            // gzip 处理
-            if (isGzip(resp)) {
-                NSData *de = gzipDecompress(data);
-                if (de) newData = de;
-            }
-
-            // 替换 JSON
-            newData = buildFakeData();
-
-            // 压缩回 gzip
-            if (isGzip(resp)) {
-                NSData *re = gzipCompress(newData);
-                if (re) newData = re;
-            }
-
-            completionHandler(newData, response, error);
-        } else {
-            completionHandler(data, response, error);
-        }
-    });
-}
-
-%end
-
-#pragma mark - Hook Delegate（继续处理 Alamofire）
-
-%hook NSURLSession
+// 重写 URLSession 的方法进行自定义逻辑处理
+@implementation MySessionDelegate
 
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data
-{
+    didReceiveData:(NSData *)data {
     NSLog(@"[Hook-Delegate] %@", dataTask.originalRequest.URL.absoluteString);
-    addLogToWindow([NSString stringWithFormat:@"[Delegate] %@", dataTask.originalRequest.URL.absoluteString]);  // 添加日志
+    addLogToWindow([NSString stringWithFormat:@"[Delegate] %@", dataTask.originalRequest.URL.absoluteString]);
 
     NSData *newData = data;
 
@@ -239,7 +196,8 @@ void addLogToWindow(NSString *log) {
         }
     }
 
-    %orig(session, dataTask, newData);
+    // 将修改后的数据传递给任务
+    [dataTask setResponseData:newData];
 }
 
-%end
+@end
