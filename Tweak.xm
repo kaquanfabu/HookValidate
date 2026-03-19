@@ -2,7 +2,8 @@
 
 #define REMOVE_KEY @"isFiveVerif"
 
-static void RemoveKey(id obj)
+// 将 RemoveKey 移动到实例方法中，避免作用域问题
+- (void)RemoveKey:(id)obj
 {
     if([obj isKindOfClass:[NSDictionary class]])
     {
@@ -11,19 +12,19 @@ static void RemoveKey(id obj)
         if(dict[REMOVE_KEY])
         {
             [dict removeObjectForKey:REMOVE_KEY];
-            NSLog(@"Removed %@", REMOVE_KEY);
+            NSLog(@"已移除 %@", REMOVE_KEY);
         }
 
         for(id key in dict)
         {
-            RemoveKey(dict[key]);
+            [self RemoveKey:dict[key]];
         }
     }
     else if([obj isKindOfClass:[NSArray class]])
     {
         for(id item in obj)
         {
-            RemoveKey(item);
+            [self RemoveKey:item];
         }
     }
 }
@@ -38,19 +39,20 @@ static void RemoveKey(id obj)
 
     id json = [NSJSONSerialization JSONObjectWithData:data options:1 error:nil];
 
-    if(json && [json isKindOfClass:[NSDictionary class]])
+    // 确保 json 实际上是一个字典
+    if (json && [json isKindOfClass:[NSDictionary class]])
     {
-        // Explicitly cast to NSMutableDictionary
+        NSLog(@"接收到的 JSON: %@", json); // 输出接收到的 JSON
         NSMutableDictionary *mutable = [json mutableCopy];
 
-        // Ensure RemoveKey is called on a valid mutable dictionary
-        RemoveKey(mutable);
+        // 确保 RemoveKey 正确调用
+        [self RemoveKey:mutable];
 
         newData = [NSJSONSerialization dataWithJSONObject:mutable options:0 error:nil];
     }
     else
     {
-        NSLog(@"Error: Received JSON is not a dictionary: %@", json);
+        NSLog(@"错误：接收到的 JSON 不是字典类型: %@", json);
     }
 
     %orig(session, task, newData);
