@@ -102,11 +102,19 @@ id RemoveKey(id obj) {
     NSData *workingData = data;
     BOOL isGzip = NO;
 
-    NSString *encoding = dataTask.response.allHeaderFields[@"Content-Encoding"];
-    if ([encoding.lowercaseString containsString:@"gzip"]) {
-        isGzip = YES;
-        NSData *decompressed = gzipDecompress(data);
-        if (decompressed) workingData = decompressed;
+    // 先判断是否是 NSHTTPURLResponse
+    NSHTTPURLResponse *httpResponse = nil;
+    if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
+        httpResponse = (NSHTTPURLResponse *)dataTask.response;
+    }
+
+    if (httpResponse) {
+        NSString *encoding = httpResponse.allHeaderFields[@"Content-Encoding"];
+        if ([encoding.lowercaseString containsString:@"gzip"]) {
+            isGzip = YES;
+            NSData *decompressed = gzipDecompress(data);
+            if (decompressed) workingData = decompressed;
+        }
     }
 
     NSData *newData = workingData;
