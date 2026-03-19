@@ -36,7 +36,7 @@ NSData *gzipDecompress(NSData *data) {
 
         if (status == Z_STREAM_END) {
             done = YES;
-        } else if (status != Z_OK) {
+        } else if (status != Z_OK && status != Z_ERRNO && status != Z_DATA_ERROR) {
             // 处理非Z_OK状态，返回nil
             inflateEnd(&strm);
             return nil;
@@ -142,15 +142,19 @@ NSData *buildFakeData() {
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
+        __weak typeof(self) weakSelf = self;
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            NSData *newData = buildFakeData();
-            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-            if (isGzip(http)) {
-                newData = gzipCompress(newData);
-            }
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf) {
+                NSData *newData = buildFakeData();
+                NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+                if (isGzip(http)) {
+                    newData = gzipCompress(newData);
+                }
 
-            // 调用原 completionHandler
-            completionHandler(newData, response, error);
+                // 调用原 completionHandler
+                completionHandler(newData, response, error);
+            }
         };
 
         return %orig(request, newHandler);  // <-- 用一个变量包裹 block
