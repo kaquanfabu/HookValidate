@@ -71,55 +71,91 @@ NSData *gzipCompress(NSData *data) {
     return compressed;
 }
 
-#pragma mark - Hook URLSession delegate
+#pragma mark - 全局缓存每个 dataTask 的分片数据
+
+static NSMutableDictionary<NSNumber *, NSMutableData *> *taskDataCache;
+
+__attribute__((constructor))
+static void initCache() {
+    taskDataCache = [NSMutableDictionary dictionary];
+}
+
+#pragma mark - Hook URLSession delegate (拼接分片 + 完整替换)
 
 %hook NSObject
 
+// 收到分片数据
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
     didReceiveData:(NSData *)data
 {
-    NSData *newData = data;
-    BOOL isGzip = NO;
+    NSNumber *taskId = @((uintptr_t)dataTask);
 
-    NSHTTPURLResponse *httpResponse = nil;
-    if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
-        httpResponse = (NSHTTPURLResponse *)dataTask.response;
+    NSMutableData *buffer = taskDataCache[taskId];
+    if (!buffer) {
+        buffer = [NSMutableData data];
+        taskDataCache[taskId] = buffer;
     }
+    [buffer appendData:data];
 
-    if (httpResponse) {
-        NSString *encoding = httpResponse.allHeaderFields[@"Content-Encoding"];
-        if ([encoding.lowercaseString containsString:@"gzip"]) {
-            isGzip = YES;
-            NSData *decompressed = gzipDecompress(data);
-            if (decompressed) newData = decompressed;
+    %orig(session, dataTask, data); // 让系统继续处理原始分片
+}
+
+// 请求完成
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+didCompleteWithError:(NSError *)error
+{
+    NSNumber *taskId = @((uintptr_t)task);
+    NSMutableData *buffer = taskDataCache[taskId];
+    if (buffer) {
+        NSData *workingData = buffer;
+        BOOL isGzip = NO;
+
+        NSHTTPURLResponse *httpResponse = nil;
+        if ([task.response isKindOfClass:[NSHTTPURLResponse class]]) {
+            httpResponse = (NSHTTPURLResponse *)task.response;
         }
+
+        if (httpResponse) {
+            NSString *encoding = httpResponse.allHeaderFields[@"Content-Encoding"];
+            if ([encoding.lowercaseString containsString:@"gzip"]) {
+                isGzip = YES;
+                NSData *decompressed = gzipDecompress(buffer);
+                if (decompressed) workingData = decompressed;
+            }
+        }
+
+        NSString *urlString = task.currentRequest.URL.absoluteString;
+        if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+            long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+
+            NSDictionary *fixedResponse = @{
+                @"sing"      : [NSNull null],
+                @"data"      : [NSNull null],
+                @"code"      : @0,
+                @"message"   : @"请求成功",
+                @"success"   : @YES,
+                @"skey"      : [NSNull null],
+                @"timestamp" : @(timestamp)
+            };
+
+            workingData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
+        }
+
+        if (isGzip) {
+            NSData *compressed = gzipCompress(workingData);
+            if (compressed) workingData = compressed;
+        }
+
+        // 替换原始缓存数据，确保 Alamofire 最终使用
+        [buffer setData:workingData];
+
+        // 删除缓存
+        [taskDataCache removeObjectForKey:taskId];
     }
 
-    NSString *urlString = dataTask.currentRequest.URL.absoluteString;
-    if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
-        // 当前时间戳（毫秒）
-        long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-
-        NSDictionary *fixedResponse = @{
-            @"sing"      : [NSNull null],
-            @"data"      : [NSNull null],
-            @"code"      : @0,
-            @"message"   : @"请求成功",
-            @"success"   : @YES,
-            @"skey"      : [NSNull null],
-            @"timestamp" : @(timestamp)
-        };
-
-        newData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
-    }
-
-    if (isGzip) {
-        NSData *compressed = gzipCompress(newData);
-        if (compressed) newData = compressed;
-    }
-
-    %orig(session, dataTask, newData);
+    %orig(session, task, error);
 }
 
 %end
