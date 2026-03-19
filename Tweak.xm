@@ -47,7 +47,7 @@ NSData *gzipDecompress(NSData *data) {
     }
 
     return nil;
-}
+} // 结束gzip解压
 
 #pragma mark - gzip 压缩
 
@@ -80,20 +80,20 @@ NSData *gzipCompress(NSData *data) {
     compressed.length = strm.total_out;
 
     return compressed;
-}
+} // 结束gzip压缩
 
-#pragma mark - 判断 gzip
+#pragma mark - 判断gzip
 
 BOOL isGzip(NSHTTPURLResponse *response) {
     NSString *encoding = response.allHeaderFields[@"Content-Encoding"];
     return [encoding.lowercaseString containsString:@"gzip"];
-}
+} // 结束判断gzip
 
-#pragma mark - 目标 URL 判断
+#pragma mark - 目标URL判断
 
 BOOL isTarget(NSURLRequest *req) {
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"];
-}
+} // 结束目标URL判断
 
 #pragma mark - 构造假数据
 
@@ -111,7 +111,7 @@ NSData *buildFakeData() {
     };
 
     return [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
-}
+} // 结束构造假数据
 
 #pragma mark - NSURLSession (completionHandler)
 
@@ -134,11 +134,11 @@ NSData *buildFakeData() {
         });
     }
     return %orig;
-}
+} // 结束NSURLSession hook
 
 %end
 
-#pragma mark - Alamofire / Delegate 模式
+#pragma mark - Alamofire / Delegate模式
 
 %hook NSURLSessionDataDelegate
 
@@ -162,7 +162,7 @@ NSData *buildFakeData() {
     }
 
     %orig;
-}
+} // 结束Alamofire delegate hook
 
 %end
 
@@ -176,7 +176,7 @@ NSData *buildFakeData() {
 
     NSURLCredential *cred = [[NSURLCredential alloc] initWithTrust:challenge.protectionSpace.serverTrust];
     completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-}
+} // 结束SSL Pinning绕过
 
 %end
 
@@ -186,6 +186,6 @@ NSData *buildFakeData() {
 
 + (BOOL)canHandleRequest:(NSURLRequest *)request {
     return YES;
-}
+} // 结束
 
 %end
