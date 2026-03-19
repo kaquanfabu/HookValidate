@@ -114,7 +114,6 @@ NSData *buildFakeData() {
 } // 结束构造假数据
 
 #pragma mark - NSURLSession (completionHandler)
-
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -124,7 +123,7 @@ NSData *buildFakeData() {
         return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
             NSData *newData = buildFakeData();
 
-            if ([response isKindOfClass:NSHTTPURLResponse.class]) {
+            if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
                 NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
                 if (isGzip(http)) {
                     newData = gzipCompress(newData);
@@ -133,7 +132,7 @@ NSData *buildFakeData() {
             completionHandler(newData, response, error);
         });
     }
-    return %orig;
+    return %orig(request, completionHandler);  // This ensures proper handling of the original method call
 } // 结束NSURLSession hook
 
 %end
