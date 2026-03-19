@@ -134,35 +134,21 @@ NSData *buildFakeData() {
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
-        return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
-
-            NSData *newData = buildFakeData();  // 构造假数据
-
+        void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSData *newData = buildFakeData();
             NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
             if (isGzip(http)) {
                 newData = gzipCompress(newData);
             }
 
-            // 调用 completionHandler，确保返回数据
-            completionHandler(newData, response, error);  
-        });
+            // 调用原 completionHandler
+            completionHandler(newData, response, error);
+        };
+
+        return %orig(request, newHandler);  // <-- 用一个变量包裹 block
     }
 
-    // 默认情况下返回原始的方法
-    return %orig(request, completionHandler);  // 注意这里是返回的原始方法
-}
-
-%end
-
-// SSL Pinning 绕过
-- (void)URLSession:(NSURLSession *)session
- didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
- completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
-
-    NSURLCredential *cred =
-        [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-
-    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
+    return %orig(request, completionHandler);
 }
 
 %end
