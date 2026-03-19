@@ -1,14 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <zlib.h>
 
-#pragma mark - gzip 解压
+#pragma mark - gzip 解压/压缩
 
 NSData *gzipDecompress(NSData *data) {
     if (!data || data.length == 0) return data;
-
     unsigned full_length = (unsigned)data.length;
     unsigned half_length = (unsigned)data.length / 2;
-
     NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
     BOOL done = NO;
     int status;
@@ -31,11 +29,8 @@ NSData *gzipDecompress(NSData *data) {
 
         status = inflate(&strm, Z_SYNC_FLUSH);
 
-        if (status == Z_STREAM_END) {
-            done = YES;
-        } else if (status != Z_OK) {
-            break;
-        }
+        if (status == Z_STREAM_END) done = YES;
+        else if (status != Z_OK) break;
     }
 
     if (inflateEnd(&strm) != Z_OK) return nil;
@@ -44,11 +39,8 @@ NSData *gzipDecompress(NSData *data) {
         decompressed.length = strm.total_out;
         return decompressed;
     }
-
     return nil;
 }
-
-#pragma mark - gzip 压缩
 
 NSData *gzipCompress(NSData *data) {
     if (!data || data.length == 0) return data;
@@ -57,9 +49,7 @@ NSData *gzipCompress(NSData *data) {
     memset(&strm, 0, sizeof(strm));
 
     if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                     (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-        return nil;
-    }
+                     (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) return nil;
 
     NSMutableData *compressed = [NSMutableData dataWithLength:16384];
 
@@ -74,28 +64,24 @@ NSData *gzipCompress(NSData *data) {
         strm.avail_out = (unsigned)(compressed.length - strm.total_out);
 
         deflate(&strm, Z_FINISH);
-
     } while (strm.avail_out == 0);
 
     deflateEnd(&strm);
-
     compressed.length = strm.total_out;
     return compressed;
 }
 
-#pragma mark - 删除字段（递归）
+#pragma mark - 递归删除字段
 
 id RemoveKey(id obj) {
     if ([obj isKindOfClass:[NSDictionary class]]) {
         NSMutableDictionary *dict = [obj mutableCopy];
         [dict removeObjectForKey:@"isFiveVerif"];
-
         for (id key in dict.allKeys) {
             dict[key] = RemoveKey(dict[key]);
         }
         return dict;
-    }
-    else if ([obj isKindOfClass:[NSArray class]]) {
+    } else if ([obj isKindOfClass:[NSArray class]]) {
         NSMutableArray *arr = [obj mutableCopy];
         for (NSInteger i = 0; i < arr.count; i++) {
             arr[i] = RemoveKey(arr[i]);
@@ -105,9 +91,9 @@ id RemoveKey(id obj) {
     return obj;
 }
 
-#pragma mark - Hook
+#pragma mark - Hook URLSession delegate
 
-%hook Alamofire.SessionDelegate
+%hook NSObject
 
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
@@ -116,21 +102,17 @@ id RemoveKey(id obj) {
     NSData *workingData = data;
     BOOL isGzip = NO;
 
-    // 判断 gzip（通过 header）
     NSString *encoding = dataTask.response.allHeaderFields[@"Content-Encoding"];
     if ([encoding.lowercaseString containsString:@"gzip"]) {
         isGzip = YES;
         NSData *decompressed = gzipDecompress(data);
-        if (decompressed) {
-            workingData = decompressed;
-        }
+        if (decompressed) workingData = decompressed;
     }
 
     NSData *newData = workingData;
 
     @try {
         id json = [NSJSONSerialization JSONObjectWithData:workingData options:0 error:nil];
-
         if (json) {
             id newJson = RemoveKey(json);
             newData = [NSJSONSerialization dataWithJSONObject:newJson options:0 error:nil];
@@ -139,12 +121,9 @@ id RemoveKey(id obj) {
         NSLog(@"[Hook] JSON parse error: %@", e);
     }
 
-    // 如果原本是 gzip → 再压回去
     if (isGzip) {
         NSData *compressed = gzipCompress(newData);
-        if (compressed) {
-            newData = compressed;
-        }
+        if (compressed) newData = compressed;
     }
 
     %orig(session, dataTask, newData);
