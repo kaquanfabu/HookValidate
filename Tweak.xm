@@ -19,7 +19,6 @@ static void RemoveKey(id obj)
             RemoveKey(dict[key]);
         }
     }
-
     else if([obj isKindOfClass:[NSArray class]])
     {
         for(id item in obj)
@@ -39,10 +38,11 @@ static void RemoveKey(id obj)
 
     id json = [NSJSONSerialization JSONObjectWithData:data options:1 error:nil];
 
-    if(json)
+    if(json && [json isKindOfClass:[NSDictionary class]])
     {
         NSMutableDictionary *mutable = [json mutableCopy];
 
+        // Ensure RemoveKey is called on a valid mutable dictionary
         RemoveKey(mutable);
 
         newData = [NSJSONSerialization dataWithJSONObject:mutable options:0 error:nil];
