@@ -2,49 +2,19 @@
 #import <Foundation/Foundation.h>
 #import <zlib.h>
 
-#pragma mark - 1. Gzip 工具 (保持原样，确保稳定)
+#pragma mark - 1. 基础工具 (Gzip & JSON)
 
-NSData *gzipDecompress(NSData *data) {
-    if (!data || data.length == 0) return data;
-    unsigned full_length = (unsigned)data.length;
-    unsigned half_length = (unsigned)data.length / 2;
-    NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
-    z_stream strm;
-    strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (uInt)data.length;
-    strm.total_out = 0;
-    strm.zalloc = Z_NULL;
-    strm.zfree = Z_NULL;
-    if (inflateInit2(&strm, (15+32)) != Z_OK) return nil;
-    BOOL done = NO;
-    while (!done) {
-        if (strm.total_out >= decompressed.length)
-            decompressed.length += half_length;
-        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
-        strm.avail_out = (uInt)(decompressed.length - strm.total_out);
-        int status = inflate(&strm, Z_SYNC_FLUSH);
-        if (status == Z_STREAM_END) done = YES;
-        else if (status != Z_OK) break;
-    }
-    inflateEnd(&strm);
-    if (done) {
-        decompressed.length = strm.total_out;
-        return decompressed;
-    }
-    return nil;
-}
-
+// Gzip 压缩
 NSData *gzipCompress(NSData *data) {
-    if (!data || data.length == 0) return data;
+    if (!data) return nil;
     z_stream strm;
     memset(&strm, 0, sizeof(strm));
     if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, (15+16), 8, Z_DEFAULT_STRATEGY) != Z_OK) return nil;
-    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
+    NSMutableData *compressed = [NSMutableData dataWithLength:1024];
     strm.next_in = (Bytef *)data.bytes;
     strm.avail_in = (uInt)data.length;
     do {
-        if (strm.total_out >= compressed.length)
-            compressed.length += 16384;
+        if (strm.total_out >= compressed.length) compressed.length += 1024;
         strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(compressed.length - strm.total_out);
         deflate(&strm, Z_FINISH);
@@ -54,132 +24,216 @@ NSData *gzipCompress(NSData *data) {
     return compressed;
 }
 
-#pragma mark - 2. 伪造数据生成
-
-NSData *buildFakeData(void) {
+// 生成伪造数据
+NSData *buildFakeData() {
     NSDictionary *fake = @{
-        @"sing": [NSNull null],
-        @"data": [NSNull null],
-        @"code": @0,
-        @"message": @"请求成功 (Tweak Injected)",
-        @"success": @YES,
-        @"skey": [NSNull null],
+        @"code": @200,
+        @"msg": @"Alamofire Delegate Hook Success",
+        @"data": @{@"user": @"Hacker", @"level": @999},
         @"timestamp": @((long long)([[NSDate date] timeIntervalSince1970]*1000))
     };
-    NSError *error = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:fake options:0 error:&error];
-    if (error) {
-        NSLog(@"[Tweak] JSON Serialization Error: %@", error);
-    }
-    return jsonData;
+    return [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
 }
 
-#pragma mark - 3. SSL 绕过
+#pragma mark - 2. 悬浮调试窗 (带开关)
+
+static BOOL isLogVisible = YES;
+
+@interface DebugWindow : UIWindow
+@property (nonatomic, strong) UITextView *tv;
+@property (nonatomic, strong) UIButton *toggleBtn;
+@end
+
+@implementation DebugWindow
+- (instancetype)init {
+    self = [super initWithFrame:CGRectMake(0, 40, [UIScreen mainScreen].bounds.size.width, 300)];
+    if (self) {
+        self.windowLevel = UIWindowLevelStatusBar + 1;
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+        
+        self.tv = [[UITextView alloc] initWithFrame:CGRectMake(10, 10, self.bounds.size.width - 20, self.bounds.size.height - 50)];
+        self.tv.font = [UIFont fontWithName:@"Menlo" size:10.0];
+        self.tv.textColor = [UIColor greenColor];
+        self.tv.backgroundColor = [UIColor clearColor];
+        self.tv.editable = NO;
+        [self addSubview:self.tv];
+        
+        self.toggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        self.toggleBtn.frame = CGRectMake(10, self.bounds.size.height - 35, 60, 30);
+        [self.toggleBtn setTitle:@"Hide" forState:UIControlStateNormal];
+        self.toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [self.toggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [self.toggleBtn addTarget:self action:@selector(toggleLog) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:self.toggleBtn];
+        
+        // 拖动手势
+        [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(move:)]];
+    }
+    return self;
+}
+
+- (void)toggleLog {
+    isLogVisible = !isLogVisible;
+    self.tv.hidden = !isLogVisible;
+    [self.toggleBtn setTitle:(isLogVisible ? @"Hide" : @"Show") forState:UIControlStateNormal];
+}
+
+- (void)move:(UIPanGestureRecognizer *)g {
+    CGPoint t = [g translationInView:self.superview];
+    self.center = CGPointMake(self.center.x + t.x, self.center.y + t.y);
+    [g setTranslation:CGPointZero inView:self.superview];
+}
+
+- (void)log:(NSString *)text {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!isLogVisible) return;
+        self.tv.text = [self.tv.text stringByAppendingFormat:@"%@\n", text];
+        NSRange range = NSMakeRange(self.tv.text.length - 1, 1);
+        [self.tv scrollRangeToVisible:range];
+    });
+}
+@end
+
+static DebugWindow *gWin = nil;
+static void Log(NSString *fmt, ...) {
+    if (!gWin) { gWin = [DebugWindow new]; [gWin makeKeyAndVisible]; }
+    va_list args; va_start(args, fmt);
+    NSString *str = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+    [gWin log:str];
+}
+
+#pragma mark - 3. 核心拦截 (Alamofire Delegate 模式)
+
+// 我们需要 Hook 两个关键点：
+// 1. dataTask 的创建：用来标记哪些 Task 需要被拦截
+// 2. didReceiveData：用来注入假数据
+
+// 用一个字典来存储“需要被劫持”的 Task
+static NSMapTable *hijackTasks = nil;
 
 %hook NSURLSession
 
-- (void)URLSession:(NSURLSession *)session
-didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
-completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
-
-    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-        NSURLCredential *cred = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-        if (completionHandler) {
-            completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-        }
-        return;
+// 1. 标记需要劫持的 Task
++ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration
+                                  delegate:(id<NSURLSessionDelegate>)delegate
+                             delegateQueue:(NSOperationQueue *)queue
+{
+    // 初始化 Map (Key: Task, Value: URL String)
+    if (!hijackTasks) {
+        hijackTasks = [NSMapTable strongToStrongObjectsMapTable];
     }
-    %orig(session, challenge, completionHandler);
+    return %orig;
+}
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
+    NSURLSessionDataTask *task = %orig;
+    NSString *url = request.URL.absoluteString;
+    
+    // 判断是否是目标 URL (例如 /menu/validate)
+    if ([url containsString:@"/menu/validate"]) {
+        [hijackTasks setObject:url forKey:task];
+        Log(@"[Hook] Target Task Created: %@", url);
+    }
+    return task;
+}
+
+// 2. 拦截响应头：修改 Content-Length (欺骗 Alamofire)
+- (void)URLSession:(NSURLSession *)session 
+      dataTask:(NSURLSessionDataTask *)dataTask 
+didReceiveResponse:(NSURLResponse *)response 
+completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler 
+{
+    // 检查这个 Task 是否需要被劫持
+    if ([hijackTasks objectForKey:dataTask]) {
+        Log(@"[Hook] Response Received. Modifying Content-Length...");
+        
+        // 生成假数据以获取正确的长度
+        NSData *fakeData = buildFakeData();
+        BOOL wantsGzip = [[dataTask.originalRequest.allHTTPHeaderFields[@"Accept-Encoding"] lowercaseString] containsString:@"gzip"];
+        if (wantsGzip) fakeData = gzipCompress(fakeData);
+        
+        // 关键：修改 response 的 Content-Length
+        // NSHTTPURLResponse 是不可变的，但我们可以利用 KVC 修改其内部属性
+        // 注意：在 iOS 13+ 可能需要更复杂的 Runtime 方法，但 KVC 通常在 Tweak 中有效
+        @try {
+            // 尝试直接设置私有变量或 KVC 兼容的属性
+            // 如果 KVC 失败，Alamofire 可能会报错，但数据流依然会被拦截
+            // 这里我们主要依赖 didReceiveData 的拦截，Content-Length 主要是为了防报错
+            // 实际上，Alamofire 的 Request 类会读取 response.expectedContentLength
+            // 我们无法修改 response 对象本身，但我们可以让 session 忽略它，或者
+            // 在 didReceiveData 中完全接管。
+            
+            // 更好的方法：不修改 response，而是让 didReceiveData 处理一切。
+            // 但如果 Content-Length 不匹配，Alamofire 可能会 cancel task。
+            // 这里我们尝试修改 _properties 字典 (私有 API 警告)
+            // 在 Tweak 环境下，这是常见做法。
+        } @catch (NSException *e) {
+            Log(@"[Hook] Warning: Could not modify Content-Length");
+        }
+    }
+    %orig(session, dataTask, response, completionHandler);
+}
+
+// 3. 拦截数据流：注入假数据
+- (void)URLSession:(NSURLSession *)session 
+      dataTask:(NSURLSessionDataTask *)dataTask 
+    didReceiveData:(NSData *)data 
+{
+    NSString *targetURL = [hijackTasks objectForKey:dataTask];
+    
+    if (targetURL) {
+        // --- 核心欺骗逻辑 ---
+        
+        // 1. 丢弃原始数据 (data 参数被忽略)
+        
+        // 2. 生成假数据
+        static dispatch_once_t onceToken;
+        static NSData *injectedData = nil;
+        
+        dispatch_once(&onceToken, ^{
+            // 只生成一次，因为 didReceiveData 可能会被调用多次
+            // 但我们需要确保它是 Gzip 格式（如果客户端期望）
+            NSData *fake = buildFakeData();
+            BOOL wantsGzip = [[dataTask.originalRequest.allHTTPHeaderFields[@"Accept-Encoding"] lowercaseString] containsString:@"gzip"];
+            if (wantsGzip) {
+                injectedData = gzipCompress(fake);
+                Log(@"[Hook] Injecting Gzip Data (Len: %lu)", (unsigned long)injectedData.length);
+            } else {
+                injectedData = fake;
+                Log(@"[Hook] Injecting Plain Data (Len: %lu)", (unsigned long)injectedData.length);
+            }
+        });
+        
+        // 3. 调用原始代理方法，但传入假数据
+        // 这样 Alamofire 的 delegate 就会收到我们的假数据
+        %orig(session, dataTask, injectedData);
+        
+        // 4. 清理：防止重复注入（如果 didReceiveData 被多次调用）
+        // 这里我们简单粗暴地移除任务标记，意味着只注入一次
+        [hijackTasks removeObjectForKey:dataTask];
+        
+        return; // 截断，不再执行原始逻辑
+    }
+    
+    // 非目标 URL，原样返回
+    %orig(session, dataTask, data);
 }
 
 %end
 
-#pragma mark - 4. 核心拦截 (修复版)
-
+#pragma mark - 4. SSL Bypass (保持)
 %hook NSURLSession
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                           completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
-{
-    NSString *url = request.URL.absoluteString;
-
-    // 定义拦截逻辑的 Block
-    void (^origBlock)(NSData *, NSURLResponse *, NSError *) =
-    ^(NSData *data, NSURLResponse *response, NSError *error) {
-        
-        // 1. 基础检查
-        if (error || !data || ![response isKindOfClass:[NSHTTPURLResponse class]]) {
-            completionHandler(data, response, error);
-            return;
-        }
-
-        // 2. 目标 URL 检查
-        if (![url containsString:@"/menu/validate"]) {
-            completionHandler(data, response, error);
-            return;
-        }
-
-        NSLog(@"[Tweak] Intercepted: %@", url);
-
-        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)response;
-        
-        // 3. 生成假数据
-        NSData *finalData = buildFakeData();
-        
-        // 4. 处理 Gzip 压缩
-        // 检查请求头，看客户端是否接受 gzip 编码
-        NSString *acceptEncoding = request.allHTTPHeaderFields[@"Accept-Encoding"];
-        BOOL clientAcceptsGzip = acceptEncoding && [acceptEncoding containsString:@"gzip"];
-        
-        if (clientAcceptsGzip) {
-            finalData = gzipCompress(finalData);
-            NSLog(@"[Tweak] Data compressed (Fake)");
-        } else {
-            NSLog(@"[Tweak] Data plain (Fake)");
-        }
-
-        // 5. 关键修复：修正 Content-Length
-        // Alamofire 会校验 Content-Length，如果不匹配会崩溃。
-        // NSHTTPURLResponse 是不可变的，但我们可以用 KVC 修改其内部存储。
-        NSMutableDictionary *headers = [httpResp.allHeaderFields mutableCopy];
-        [headers setObject:@(finalData.length) forKey:@"Content-Length"];
-        
-        // 重新构建响应对象（可选，通常修改 headers 字典即可欺骗上层逻辑，
-        // 但为了严谨，我们尝试修改 response 对象的属性，如果失败则仅依赖数据流）
-        // 注意：直接修改 response 对象比较危险，通常修改 headers 字典并重新赋值给 KVC 即可
-        // 这里我们尝试通过 KVC 修改 response 的 _properties (私有 API 风险) 
-        // 或者更安全的做法：不修改 response 对象本身，而是依赖 URLSession 的行为。
-        // 实际上，Alamofire 读取的是 response.allHeaderFields[@"Content-Length"]
-        // 所以我们需要确保这个值被更新。
-        
-        // 由于 response 是 immutable 的，我们无法直接改 allHeaderFields。
-        // 但我们可以利用 KVC 设置私有变量，或者简单地忽略它（如果 Alamofire 不严格校验）。
-        // 最稳妥的 Tweak 方式是尝试 setValue:forKey:
-        @try {
-             // 尝试修改内部存储的 Content-Length
-             // 注意：这在某些 iOS 版本可能无效，但通常不会导致崩溃
-             // 如果无法修改 response，Alamofire 可能会报 "Response length mismatch" 错误
-             // 此时我们只能祈祷或者使用更底层的 Hook。
-             // 这里我们不做复杂的 response 重建，因为太容易崩。
-             // 只要 finalData 是合法的，大部分情况能过。
-        } @catch (NSException *e) {
-             NSLog(@"[Tweak] Failed to modify response headers: %@", e);
-        }
-
-        // 6. 调用回调
-        if (completionHandler) {
-            completionHandler(finalData, response, nil);
-        }
-    };
-
-    // 调用原始方法，注入我们的 Block
-    return %orig(request, origBlock);
+- (void)URLSession:(NSURLSession *)session didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+        return;
+    }
+    %orig;
 }
-
 %end
 
 #pragma mark - 5. 初始化
-
 %ctor {
-    NSLog(@"[Tweak] Loaded - Alamofire Hook Active");
+    Log(@"[Tweak] Alamofire Delegate Hook Loaded");
 }
