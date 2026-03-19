@@ -1,7 +1,8 @@
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 #import <zlib.h>
 
-#pragma mark - gzip 解压/压缩
+#pragma mark - gzip 压缩/解压
 
 NSData *gzipDecompress(NSData *data) {
     if (!data || data.length == 0) return data;
@@ -71,91 +72,80 @@ NSData *gzipCompress(NSData *data) {
     return compressed;
 }
 
-#pragma mark - 全局缓存每个 dataTask 的分片数据
+#pragma mark - 自定义 NSURLProtocol
 
-static NSMutableDictionary<NSNumber *, NSMutableData *> *taskDataCache;
+@interface HookURLProtocol : NSURLProtocol <NSURLSessionDataDelegate>
+@property (nonatomic, strong) NSURLSessionDataTask *task;
+@end
+
+@implementation HookURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    NSString *url = request.URL.absoluteString;
+    // 仅拦截目标接口
+    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        // 防止重复处理
+        if ([NSURLProtocol propertyForKey:@"HookHandled" inRequest:request]) {
+            return NO;
+        }
+        return YES;
+    }
+    return NO;
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    NSMutableURLRequest *mutableReq = [self.request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:@"HookHandled" inRequest:mutableReq];
+
+    long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+
+    NSDictionary *fixedResponse = @{
+        @"sing"      : [NSNull null],
+        @"data"      : [NSNull null],
+        @"code"      : @0,
+        @"message"   : @"请求成功",
+        @"success"   : @YES,
+        @"skey"      : [NSNull null],
+        @"timestamp" : @(timestamp)
+    };
+
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
+
+    // 判断是否需要 gzip
+    BOOL shouldGzip = NO;
+    NSString *acceptEncoding = [self.request valueForHTTPHeaderField:@"Accept-Encoding"];
+    if ([acceptEncoding.lowercaseString containsString:@"gzip"]) {
+        shouldGzip = YES;
+        NSData *compressed = gzipCompress(jsonData);
+        if (compressed) jsonData = compressed;
+    }
+
+    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
+                                                              statusCode:200
+                                                             HTTPVersion:@"HTTP/1.1"
+                                                            headerFields:shouldGzip ? @{@"Content-Encoding": @"gzip"} : nil];
+
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:jsonData];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+
+- (void)stopLoading {
+    if (self.task) {
+        [self.task cancel];
+        self.task = nil;
+    }
+}
+
+@end
+
+#pragma mark - 注册 NSURLProtocol
 
 __attribute__((constructor))
-static void initCache() {
-    taskDataCache = [NSMutableDictionary dictionary];
+static void registerHookProtocol() {
+    [NSURLProtocol registerClass:[HookURLProtocol class]];
 }
-
-#pragma mark - Hook URLSession delegate (拼接分片 + 完整替换)
-
-%hook NSObject
-
-// 收到分片数据
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data
-{
-    NSNumber *taskId = @((uintptr_t)dataTask);
-
-    NSMutableData *buffer = taskDataCache[taskId];
-    if (!buffer) {
-        buffer = [NSMutableData data];
-        taskDataCache[taskId] = buffer;
-    }
-    [buffer appendData:data];
-
-    %orig(session, dataTask, data); // 让系统继续处理原始分片
-}
-
-// 请求完成
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error
-{
-    NSNumber *taskId = @((uintptr_t)task);
-    NSMutableData *buffer = taskDataCache[taskId];
-    if (buffer) {
-        NSData *workingData = buffer;
-        BOOL isGzip = NO;
-
-        NSHTTPURLResponse *httpResponse = nil;
-        if ([task.response isKindOfClass:[NSHTTPURLResponse class]]) {
-            httpResponse = (NSHTTPURLResponse *)task.response;
-        }
-
-        if (httpResponse) {
-            NSString *encoding = httpResponse.allHeaderFields[@"Content-Encoding"];
-            if ([encoding.lowercaseString containsString:@"gzip"]) {
-                isGzip = YES;
-                NSData *decompressed = gzipDecompress(buffer);
-                if (decompressed) workingData = decompressed;
-            }
-        }
-
-        NSString *urlString = task.currentRequest.URL.absoluteString;
-        if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"]) {
-            long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-
-            NSDictionary *fixedResponse = @{
-                @"sing"      : [NSNull null],
-                @"data"      : [NSNull null],
-                @"code"      : @0,
-                @"message"   : @"请求成功",
-                @"success"   : @YES,
-                @"skey"      : [NSNull null],
-                @"timestamp" : @(timestamp)
-            };
-
-            workingData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
-        }
-
-        if (isGzip) {
-            NSData *compressed = gzipCompress(workingData);
-            if (compressed) workingData = compressed;
-        }
-
-        // 替换原始缓存数据，确保 Alamofire 最终使用
-        [buffer setData:workingData];
-
-        // 删除缓存
-        [taskDataCache removeObjectForKey:taskId];
-    }
-
-    %orig(session, task, error);
-}
-
-%end
