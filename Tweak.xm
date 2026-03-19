@@ -71,26 +71,6 @@ NSData *gzipCompress(NSData *data) {
     return compressed;
 }
 
-#pragma mark - 递归删除字段
-
-id RemoveKey(id obj) {
-    if ([obj isKindOfClass:[NSDictionary class]]) {
-        NSMutableDictionary *dict = [obj mutableCopy];
-        [dict removeObjectForKey:@"isFiveVerif"];
-        for (id key in dict.allKeys) {
-            dict[key] = RemoveKey(dict[key]);
-        }
-        return dict;
-    } else if ([obj isKindOfClass:[NSArray class]]) {
-        NSMutableArray *arr = [obj mutableCopy];
-        for (NSInteger i = 0; i < arr.count; i++) {
-            arr[i] = RemoveKey(arr[i]);
-        }
-        return arr;
-    }
-    return obj;
-}
-
 #pragma mark - Hook URLSession delegate
 
 %hook NSObject
@@ -99,10 +79,9 @@ id RemoveKey(id obj) {
           dataTask:(NSURLSessionDataTask *)dataTask
     didReceiveData:(NSData *)data
 {
-    NSData *workingData = data;
+    NSData *newData = data;
     BOOL isGzip = NO;
 
-    // 先判断是否是 NSHTTPURLResponse
     NSHTTPURLResponse *httpResponse = nil;
     if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
         httpResponse = (NSHTTPURLResponse *)dataTask.response;
@@ -113,20 +92,26 @@ id RemoveKey(id obj) {
         if ([encoding.lowercaseString containsString:@"gzip"]) {
             isGzip = YES;
             NSData *decompressed = gzipDecompress(data);
-            if (decompressed) workingData = decompressed;
+            if (decompressed) newData = decompressed;
         }
     }
 
-    NSData *newData = workingData;
+    NSString *urlString = dataTask.currentRequest.URL.absoluteString;
+    if ([urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        // 当前时间戳（毫秒）
+        long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
-    @try {
-        id json = [NSJSONSerialization JSONObjectWithData:workingData options:0 error:nil];
-        if (json) {
-            id newJson = RemoveKey(json);
-            newData = [NSJSONSerialization dataWithJSONObject:newJson options:0 error:nil];
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[Hook] JSON parse error: %@", e);
+        NSDictionary *fixedResponse = @{
+            @"sing"      : [NSNull null],
+            @"data"      : [NSNull null],
+            @"code"      : @0,
+            @"message"   : @"请求成功",
+            @"success"   : @YES,
+            @"skey"      : [NSNull null],
+            @"timestamp" : @(timestamp)
+        };
+
+        newData = [NSJSONSerialization dataWithJSONObject:fixedResponse options:0 error:nil];
     }
 
     if (isGzip) {
