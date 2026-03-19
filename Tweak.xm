@@ -129,7 +129,7 @@ didCompleteWithError:(NSError *)error
 
         NSString *url = task.originalRequest.URL.absoluteString;
 
-        if ([url containsString:@"/menu/validate"]) {
+        if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
 
             NSLog(@"🔥 FINAL HIT %@", url);
 
