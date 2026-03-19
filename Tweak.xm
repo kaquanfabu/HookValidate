@@ -9,7 +9,7 @@ NSData *gzipDecompress(NSData *data) {
     unsigned full_length = (unsigned)data.length;
     unsigned half_length = (unsigned)data.length / 2;
 
-    NSMutableData *decompressed = [NSMutableData dataWithLength: full_length + half_length];
+    NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
 
     BOOL done = NO;
     int status;
@@ -21,7 +21,7 @@ NSData *gzipDecompress(NSData *data) {
     strm.zalloc = Z_NULL;
     strm.zfree = Z_NULL;
 
-    if (inflateInit2(&strm, (15 + 32)) != Z_OK) return nil;
+    if (inflateInit2(&strm, 15 + 32) != Z_OK) return nil;
 
     while (!done) {
         if (strm.total_out >= decompressed.length)
@@ -47,7 +47,7 @@ NSData *gzipDecompress(NSData *data) {
     }
 
     return nil;
-} // 结束gzip解压
+}
 
 #pragma mark - gzip 压缩
 
@@ -57,43 +57,56 @@ NSData *gzipCompress(NSData *data) {
     z_stream strm;
     memset(&strm, 0, sizeof(strm));
 
-    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                     (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) return nil;
+    if (deflateInit2(&strm,
+                     Z_DEFAULT_COMPRESSION,
+                     Z_DEFLATED,
+                     15 + 16,
+                     8,
+                     Z_DEFAULT_STRATEGY) != Z_OK) {
+        return nil;
+    }
 
     NSMutableData *compressed = [NSMutableData dataWithLength:16384];
 
     strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (unsigned)data.length;
+    strm.avail_in = (uInt)data.length;
+
+    int status;
 
     do {
-        if (strm.total_out >= compressed.length)
+        if (strm.total_out >= compressed.length) {
             compressed.length += 16384;
+        }
 
         strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
-        strm.avail_out = (unsigned)(compressed.length - strm.total_out);
+        strm.avail_out = (uInt)(compressed.length - strm.total_out);
 
-        deflate(&strm, Z_FINISH);
+        status = deflate(&strm, Z_FINISH);
 
-    } while (strm.avail_out == 0);
+    } while (status == Z_OK);
 
     deflateEnd(&strm);
-    compressed.length = strm.total_out;
 
+    if (status != Z_STREAM_END) {
+        return nil;
+    }
+
+    compressed.length = strm.total_out;
     return compressed;
-} // 结束gzip压缩
+}
 
 #pragma mark - 判断gzip
 
 BOOL isGzip(NSHTTPURLResponse *response) {
     NSString *encoding = response.allHeaderFields[@"Content-Encoding"];
     return [encoding.lowercaseString containsString:@"gzip"];
-} // 结束判断gzip
+}
 
 #pragma mark - 目标URL判断
 
 BOOL isTarget(NSURLRequest *req) {
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"];
-} // 结束目标URL判断
+}
 
 #pragma mark - 构造假数据
 
@@ -111,86 +124,78 @@ NSData *buildFakeData() {
     };
 
     return [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
-} // 结束构造假数据
+}
 
-#pragma mark - NSURLSession (completionHandler)
+#pragma mark - NSURLSession Hook (completionHandler + SSL Pinning)
 
 %hook NSURLSession
 
+// 拦截 completionHandler 请求
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
-        // 创建一个新的block并调用原始方法
         return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
-            NSData *newData = buildFakeData();  // 假数据
 
-            if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-                NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-                if (isGzip(http)) {
-                    newData = gzipCompress(newData);  // 压缩数据
-                }
+            NSData *newData = buildFakeData();
+
+            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+            if (isGzip(http)) {
+                newData = gzipCompress(newData);
             }
 
-            // 调用completionHandler，确保与原始方法的行为一致
             completionHandler(newData, response, error);
         });
     }
 
-    // 默认调用原始方法
     return %orig(request, completionHandler);
-} // 结束NSURLSession hook
+}
+
+// SSL Pinning 绕过
+- (void)URLSession:(NSURLSession *)session
+ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+
+    NSURLCredential *cred =
+        [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+
+    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
+}
 
 %end
 
-#pragma mark - Alamofire / Delegate模式
+#pragma mark - Alamofire / Delegate 模式（兼容）
 
-%hook NSURLSessionDataDelegate
+%hook NSURLSessionTask
 
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data {
+- (void)setState:(NSURLSessionTaskState)state {
+    %orig;
 
-    NSURLRequest *req = dataTask.currentRequest;
+    if (state == NSURLSessionTaskStateCompleted) {
 
-    if (isTarget(req)) {
+        NSURLRequest *req = self.currentRequest;
+        if (!isTarget(req)) return;
+
         NSData *newData = buildFakeData();
-
-        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
-
+        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)self.response;
         if (isGzip(resp)) {
             newData = gzipCompress(newData);
         }
 
-        %orig(session, dataTask, newData);
-        return;
+        // KVC 替换 responseData
+        [self setValue:newData forKey:@"_responseData"];
     }
-
-    %orig;
-} // 结束Alamofire delegate hook
+}
 
 %end
 
-#pragma mark - SSL Pinning 绕过
-
-%hook NSURLSession
-
-- (void)URLSession:(NSURLSession *)session
-              didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
-                completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *credential))completionHandler {
-
-    NSURLCredential *cred = [[NSURLCredential alloc] initWithTrust:challenge.protectionSpace.serverTrust];
-    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-} // 结束SSL Pinning绕过
-
-%end
-
-#pragma mark - 防某些库（AFNetworking）
+#pragma mark - 防 AFNetworking / NSURLConnection
 
 %hook NSURLConnection
 
 + (BOOL)canHandleRequest:(NSURLRequest *)request {
-    return YES;
-} // 结束
+    if (isTarget(request)) return YES;
+    return %orig;
+}
 
 %end
