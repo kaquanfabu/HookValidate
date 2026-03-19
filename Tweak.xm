@@ -142,9 +142,9 @@ NSData *buildFakeData() {
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
-        __weak typeof(self) weakSelf = self;
+        __unsafe_unretained typeof(self) weakSelf = self;
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            __strong typeof(weakSelf) strongSelf = weakSelf;
+            __unsafe_unretained typeof(self) strongSelf = weakSelf;
             if (strongSelf) {
                 NSData *newData = buildFakeData();
                 NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
