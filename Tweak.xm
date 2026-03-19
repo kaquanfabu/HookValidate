@@ -168,50 +168,47 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
 #pragma mark - 核心拦截（Alamofire 关键）
 
-%hook NSURLSession
+%hook%hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
 completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
 {
     NSString *url = request.URL.absoluteString;
-    logx([NSString stringWithFormat:@"[REQ] %@", url]);
 
     return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-        if (!data || ![response isKindOfClass:NSHTTPURLResponse.class]) {
-            completionHandler(data,response,error);
+        if (!data || ![response isKindOfClass:[NSHTTPURLResponse class]]) {
+            completionHandler(data, response, error);
             return;
         }
 
         NSHTTPURLResponse *resp = (NSHTTPURLResponse *)response;
 
-        // 目标接口
         if ([url containsString:@"/menu/validate"]) {
-
-            logx(@"🔥 HIT TARGET");
 
             NSData *newData = data;
 
             // 解 gzip
-            if (isGzip(resp)) {
+            NSString *encoding = resp.allHeaderFields[@"Content-Encoding"];
+            if (encoding && [encoding.lowercaseString containsString:@"gzip"]) {
                 NSData *de = gzipDecompress(data);
                 if (de) newData = de;
             }
 
-            // 替换
+            // 替换数据
             newData = buildFakeData();
 
-            // 压回
-            if (isGzip(resp)) {
+            // 压回 gzip
+            if (encoding && [encoding.lowercaseString containsString:@"gzip"]) {
                 NSData *re = gzipCompress(newData);
                 if (re) newData = re;
             }
 
-            completionHandler(newData,response,nil);
+            completionHandler(newData, response, nil);
             return;
         }
 
-        completionHandler(data,response,error);
+        completionHandler(data, response, error);
     });
 }
 
