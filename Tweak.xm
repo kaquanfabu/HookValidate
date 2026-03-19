@@ -24,8 +24,10 @@ NSData *gzipDecompress(NSData *data) {
     if (inflateInit2(&strm, 15 + 32) != Z_OK) return nil;
 
     while (!done) {
-        if (strm.total_out >= decompressed.length)
-            decompressed.length += half_length;
+        // 如果输出数据超出当前大小，则扩大内存
+        if (strm.total_out >= decompressed.length) {
+            decompressed.length += half_length; // 扩容
+        }
 
         strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
         strm.avail_out = (unsigned)(decompressed.length - strm.total_out);
@@ -35,12 +37,16 @@ NSData *gzipDecompress(NSData *data) {
         if (status == Z_STREAM_END) {
             done = YES;
         } else if (status != Z_OK) {
-            break;
+            // 处理非Z_OK状态，返回nil
+            inflateEnd(&strm);
+            return nil;
         }
     }
 
+    // 结束解压过程
     if (inflateEnd(&strm) != Z_OK) return nil;
 
+    // 设置解压后的数据长度
     if (done) {
         decompressed.length = strm.total_out;
         return decompressed;
@@ -60,7 +66,7 @@ NSData *gzipCompress(NSData *data) {
     if (deflateInit2(&strm,
                      Z_DEFAULT_COMPRESSION,
                      Z_DEFLATED,
-                     15 + 16,
+                     15 + 16,  // -15为gzip头，+16为标志
                      8,
                      Z_DEFAULT_STRATEGY) != Z_OK) {
         return nil;
@@ -74,6 +80,7 @@ NSData *gzipCompress(NSData *data) {
     int status;
 
     do {
+        // 如果压缩数据超出当前大小，则扩大内存
         if (strm.total_out >= compressed.length) {
             compressed.length += 16384;
         }
@@ -91,6 +98,7 @@ NSData *gzipCompress(NSData *data) {
         return nil;
     }
 
+    // 设置压缩后的数据长度
     compressed.length = strm.total_out;
     return compressed;
 }
