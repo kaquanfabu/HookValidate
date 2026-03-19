@@ -105,7 +105,7 @@ BOOL isGzip(NSHTTPURLResponse *response) {
 #pragma mark - 目标URL判断
 
 BOOL isTarget(NSURLRequest *req) {
-    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/five/verif/position"];
+    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
 #pragma mark - 构造假数据
