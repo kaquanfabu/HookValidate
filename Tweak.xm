@@ -1,114 +1,4 @@
 #import <Foundation/Foundation.h>
-#import <zlib.h>
-
-#pragma mark - gzip 解压
-
-NSData *gzipDecompress(NSData *data) {
-    if (!data || data.length == 0) return data;
-
-    unsigned full_length = (unsigned)data.length;
-    unsigned half_length = (unsigned)data.length / 2;
-
-    NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
-
-    BOOL done = NO;
-    int status;
-
-    z_stream strm;
-    strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (unsigned)data.length;
-    strm.total_out = 0;
-    strm.zalloc = Z_NULL;
-    strm.zfree = Z_NULL;
-
-    if (inflateInit2(&strm, 15 + 32) != Z_OK) return nil;
-
-    while (!done) {
-        // 如果输出数据超出当前大小，则扩大内存
-        if (strm.total_out >= decompressed.length) {
-            decompressed.length += half_length; // 扩容
-        }
-
-        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
-        strm.avail_out = (unsigned)(decompressed.length - strm.total_out);
-
-        status = inflate(&strm, Z_SYNC_FLUSH);
-
-        if (status == Z_STREAM_END) {
-            done = YES;
-        } else if (status != Z_OK && status != Z_ERRNO && status != Z_DATA_ERROR) {
-            // 处理非Z_OK状态，返回nil
-            inflateEnd(&strm);
-            return nil;
-        }
-    }
-
-    // 结束解压过程
-    if (inflateEnd(&strm) != Z_OK) return nil;
-
-    // 设置解压后的数据长度
-    if (done) {
-        decompressed.length = strm.total_out;
-        return decompressed;
-    }
-
-    return nil;
-}
-
-#pragma mark - gzip 压缩
-
-NSData *gzipCompress(NSData *data) {
-    if (!data || data.length == 0) return data;
-
-    z_stream strm;
-    memset(&strm, 0, sizeof(strm));
-
-    if (deflateInit2(&strm,
-                     Z_DEFAULT_COMPRESSION,
-                     Z_DEFLATED,
-                     15 + 16,  // -15为gzip头，+16为标志
-                     8,
-                     Z_DEFAULT_STRATEGY) != Z_OK) {
-        return nil;
-    }
-
-    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
-
-    strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (uInt)data.length;
-
-    int status;
-
-    do {
-        // 如果压缩数据超出当前大小，则扩大内存
-        if (strm.total_out >= compressed.length) {
-            compressed.length += 16384;
-        }
-
-        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
-        strm.avail_out = (uInt)(compressed.length - strm.total_out);
-
-        status = deflate(&strm, Z_FINISH);
-
-    } while (status == Z_OK);
-
-    deflateEnd(&strm);
-
-    if (status != Z_STREAM_END) {
-        return nil;
-    }
-
-    // 设置压缩后的数据长度
-    compressed.length = strm.total_out;
-    return compressed;
-}
-
-#pragma mark - 判断gzip
-
-BOOL isGzip(NSHTTPURLResponse *response) {
-    NSString *encoding = response.allHeaderFields[@"Content-Encoding"];
-    return [encoding.lowercaseString containsString:@"gzip"];
-}
 
 #pragma mark - 目标URL判断
 
@@ -146,13 +36,10 @@ NSData *buildFakeData() {
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
             __unsafe_unretained typeof(self) strongSelf = weakSelf;
             if (strongSelf) {
+                // 直接返回未压缩的伪造数据
                 NSData *newData = buildFakeData();
-                NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-                if (isGzip(http)) {
-                    newData = gzipCompress(newData);
-                }
-
-                // 调用原 completionHandler
+                
+                // 调用原 completionHandler 返回未压缩的数据
                 completionHandler(newData, response, error);
             }
         };
@@ -178,11 +65,8 @@ NSData *buildFakeData() {
         if (!isTarget(req)) return;
 
         NSData *newData = buildFakeData();
-        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)self.response;
-        if (isGzip(resp)) {
-            newData = gzipCompress(newData);
-        }
-
+        
+        // 直接返回未压缩的伪造数据
         // KVC 替换 responseData
         [self setValue:newData forKey:@"_responseData"];
     }
