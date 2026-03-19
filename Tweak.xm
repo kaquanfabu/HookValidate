@@ -1,61 +1,153 @@
 #import <Foundation/Foundation.h>
+#import <zlib.h>
 
-#define REMOVE_KEY @"isFiveVerif"
+#pragma mark - gzip 解压
 
-// 将 RemoveKey 移动到实例方法中，避免作用域问题
-- (void)RemoveKey:(id)obj
-{
-    if([obj isKindOfClass:[NSDictionary class]])
-    {
-        NSMutableDictionary *dict = obj;
+NSData *gzipDecompress(NSData *data) {
+    if (!data || data.length == 0) return data;
 
-        if(dict[REMOVE_KEY])
-        {
-            [dict removeObjectForKey:REMOVE_KEY];
-            NSLog(@"已移除 %@", REMOVE_KEY);
-        }
+    unsigned full_length = (unsigned)data.length;
+    unsigned half_length = (unsigned)data.length / 2;
 
-        for(id key in dict)
-        {
-            [self RemoveKey:dict[key]];
+    NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
+    BOOL done = NO;
+    int status;
+
+    z_stream strm;
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (unsigned)data.length;
+    strm.total_out = 0;
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+
+    if (inflateInit2(&strm, (15 + 32)) != Z_OK) return nil;
+
+    while (!done) {
+        if (strm.total_out >= decompressed.length)
+            decompressed.length += half_length;
+
+        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
+        strm.avail_out = (unsigned)(decompressed.length - strm.total_out);
+
+        status = inflate(&strm, Z_SYNC_FLUSH);
+
+        if (status == Z_STREAM_END) {
+            done = YES;
+        } else if (status != Z_OK) {
+            break;
         }
     }
-    else if([obj isKindOfClass:[NSArray class]])
-    {
-        for(id item in obj)
-        {
-            [self RemoveKey:item];
-        }
+
+    if (inflateEnd(&strm) != Z_OK) return nil;
+
+    if (done) {
+        decompressed.length = strm.total_out;
+        return decompressed;
     }
+
+    return nil;
 }
 
-%hook NSObject
+#pragma mark - gzip 压缩
+
+NSData *gzipCompress(NSData *data) {
+    if (!data || data.length == 0) return data;
+
+    z_stream strm;
+    memset(&strm, 0, sizeof(strm));
+
+    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                     (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        return nil;
+    }
+
+    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
+
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (unsigned)data.length;
+
+    do {
+        if (strm.total_out >= compressed.length)
+            compressed.length += 16384;
+
+        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
+        strm.avail_out = (unsigned)(compressed.length - strm.total_out);
+
+        deflate(&strm, Z_FINISH);
+
+    } while (strm.avail_out == 0);
+
+    deflateEnd(&strm);
+
+    compressed.length = strm.total_out;
+    return compressed;
+}
+
+#pragma mark - 删除字段（递归）
+
+id RemoveKey(id obj) {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *dict = [obj mutableCopy];
+        [dict removeObjectForKey:@"isFiveVerif"];
+
+        for (id key in dict.allKeys) {
+            dict[key] = RemoveKey(dict[key]);
+        }
+        return dict;
+    }
+    else if ([obj isKindOfClass:[NSArray class]]) {
+        NSMutableArray *arr = [obj mutableCopy];
+        for (NSInteger i = 0; i < arr.count; i++) {
+            arr[i] = RemoveKey(arr[i]);
+        }
+        return arr;
+    }
+    return obj;
+}
+
+#pragma mark - Hook
+
+%hook Alamofire.SessionDelegate
 
 - (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)task
+          dataTask:(NSURLSessionDataTask *)dataTask
     didReceiveData:(NSData *)data
 {
-    NSData *newData = data;
+    NSData *workingData = data;
+    BOOL isGzip = NO;
 
-    id json = [NSJSONSerialization JSONObjectWithData:data options:1 error:nil];
-
-    // 确保 json 实际上是一个字典
-    if (json && [json isKindOfClass:[NSDictionary class]])
-    {
-        NSLog(@"接收到的 JSON: %@", json); // 输出接收到的 JSON
-        NSMutableDictionary *mutable = [json mutableCopy];
-
-        // 确保 RemoveKey 正确调用
-        [self RemoveKey:mutable];
-
-        newData = [NSJSONSerialization dataWithJSONObject:mutable options:0 error:nil];
-    }
-    else
-    {
-        NSLog(@"错误：接收到的 JSON 不是字典类型: %@", json);
+    // 判断 gzip（通过 header）
+    NSString *encoding = dataTask.response.allHeaderFields[@"Content-Encoding"];
+    if ([encoding.lowercaseString containsString:@"gzip"]) {
+        isGzip = YES;
+        NSData *decompressed = gzipDecompress(data);
+        if (decompressed) {
+            workingData = decompressed;
+        }
     }
 
-    %orig(session, task, newData);
+    NSData *newData = workingData;
+
+    @try {
+        id json = [NSJSONSerialization JSONObjectWithData:workingData options:0 error:nil];
+
+        if (json) {
+            id newJson = RemoveKey(json);
+            newData = [NSJSONSerialization dataWithJSONObject:newJson options:0 error:nil];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[Hook] JSON parse error: %@", e);
+    }
+
+    // 如果原本是 gzip → 再压回去
+    if (isGzip) {
+        NSData *compressed = gzipCompress(newData);
+        if (compressed) {
+            newData = compressed;
+        }
+    }
+
+    %orig(session, dataTask, newData);
 }
 
 %end
