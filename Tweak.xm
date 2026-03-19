@@ -130,26 +130,29 @@ NSData *buildFakeData() {
 
 %hook NSURLSession
 
-// 拦截 completionHandler 请求
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
         return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-            NSData *newData = buildFakeData();
+            NSData *newData = buildFakeData();  // 构造假数据
 
             NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
             if (isGzip(http)) {
                 newData = gzipCompress(newData);
             }
 
-            completionHandler(newData, response, error);
+            // 调用 completionHandler，确保返回数据
+            completionHandler(newData, response, error);  
         });
     }
 
-    return %orig(request, completionHandler);
+    // 默认情况下返回原始的方法
+    return %orig(request, completionHandler);  // 注意这里是返回的原始方法
 }
+
+%end
 
 // SSL Pinning 绕过
 - (void)URLSession:(NSURLSession *)session
