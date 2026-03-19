@@ -121,23 +121,18 @@ NSData *buildFakeData() {
                             completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
 
     if (isTarget(request)) {
-
         return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
-
             NSData *newData = buildFakeData();
 
             if ([response isKindOfClass:NSHTTPURLResponse.class]) {
                 NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-
                 if (isGzip(http)) {
                     newData = gzipCompress(newData);
                 }
             }
-
             completionHandler(newData, response, error);
         });
     }
-
     return %orig;
 }
 
@@ -154,7 +149,6 @@ NSData *buildFakeData() {
     NSURLRequest *req = dataTask.currentRequest;
 
     if (isTarget(req)) {
-
         NSData *newData = buildFakeData();
 
         NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
