@@ -26,7 +26,7 @@ NSData *gzipDecompress(NSData *data) {
         if (strm.total_out >= decompressed.length)
             decompressed.length += half_length;
 
-        strm.next_out = decompressed.mutableBytes + strm.total_out;
+        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(decompressed.length - strm.total_out);
 
         int status = inflate(&strm, Z_SYNC_FLUSH);
@@ -63,7 +63,7 @@ NSData *gzipCompress(NSData *data) {
         if (strm.total_out >= compressed.length)
             compressed.length += 16384;
 
-        strm.next_out = compressed.mutableBytes + strm.total_out;
+        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(compressed.length - strm.total_out);
 
         deflate(&strm, Z_FINISH);
