@@ -3,24 +3,59 @@
 #import <zlib.h>
 #import <objc/runtime.h>
 
-#pragma mark - UI 日志面板
+#pragma mark - UI Logger
 
 @interface HookLogger : NSObject
++ (void)initUI;
 + (void)log:(NSString *)fmt, ...;
 @end
 
 @implementation HookLogger
 
 static UITextView *textView;
+static UIView *panel;
+static BOOL hidden = NO;
+
++ (UIWindow *)getKeyWindow {
+
+    UIWindow *win = nil;
+
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive &&
+                [scene isKindOfClass:[UIWindowScene class]]) {
+
+                UIWindowScene *ws = (UIWindowScene *)scene;
+
+                for (UIWindow *w in ws.windows) {
+                    if (w.isKeyWindow) {
+                        win = w;
+                        break;
+                    }
+                }
+            }
+            if (win) break;
+        }
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        win = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
+    }
+
+    return win;
+}
 
 + (void)initUI {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+
+        UIWindow *win = [self getKeyWindow];
         if (!win) return;
 
-        UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(10, 100, 350, 300)];
-        panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
+        panel = [[UIView alloc] initWithFrame:CGRectMake(20, 120, 320, 260)];
+        panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.75];
         panel.layer.cornerRadius = 10;
+        panel.clipsToBounds = YES;
 
         textView = [[UITextView alloc] initWithFrame:panel.bounds];
         textView.backgroundColor = [UIColor clearColor];
@@ -29,11 +64,35 @@ static UITextView *textView;
         textView.editable = NO;
 
         [panel addSubview:textView];
+
+        // ✅ 拖动手势
+        UIPanGestureRecognizer *pan =
+        [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+        [panel addGestureRecognizer:pan];
+
+        // ✅ 双击隐藏
+        UITapGestureRecognizer *tap =
+        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
+        tap.numberOfTapsRequired = 2;
+        [panel addGestureRecognizer:tap];
+
         [win addSubview:panel];
     });
 }
 
++ (void)handlePan:(UIPanGestureRecognizer *)pan {
+    CGPoint t = [pan translationInView:panel.superview];
+    panel.center = CGPointMake(panel.center.x + t.x, panel.center.y + t.y);
+    [pan setTranslation:CGPointZero inView:panel.superview];
+}
+
++ (void)toggle {
+    hidden = !hidden;
+    panel.alpha = hidden ? 0.1 : 1.0;
+}
+
 + (void)log:(NSString *)fmt, ... {
+
     va_list args;
     va_start(args, fmt);
     NSString *str = [[NSString alloc] initWithFormat:fmt arguments:args];
@@ -43,7 +102,13 @@ static UITextView *textView;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!textView) return;
-        textView.text = [textView.text stringByAppendingFormat:@"\n%@", str];
+
+        NSString *newText = [textView.text stringByAppendingFormat:@"\n%@", str];
+        textView.text = newText;
+
+        // 自动滚动
+        NSRange range = NSMakeRange(textView.text.length - 1, 1);
+        [textView scrollRangeToVisible:range];
     });
 }
 
@@ -66,7 +131,7 @@ NSData *gzipDecompress(NSData *data) {
         if (strm.total_out >= out.length)
             out.length += data.length;
 
-        strm.next_out = out.mutableBytes + strm.total_out;
+        strm.next_out = (Bytef *)out.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(out.length - strm.total_out);
 
         int status = inflate(&strm, Z_SYNC_FLUSH);
@@ -100,7 +165,7 @@ NSData *gzipCompress(NSData *data) {
         if (strm.total_out >= out.length)
             out.length += 16384;
 
-        strm.next_out = out.mutableBytes + strm.total_out;
+        strm.next_out = (Bytef *)out.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(out.length - strm.total_out);
 
         deflate(&strm, Z_FINISH);
@@ -117,7 +182,7 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
     return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - Fake 数据
+#pragma mark - Fake Data
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -131,7 +196,7 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - Hook Alamofire DataTaskDelegate（核心）
+#pragma mark - Alamofire Hook（核心）
 
 %hook Alamofire_DataTaskDelegate
 
@@ -141,16 +206,18 @@ NSData *buildFakeData(void) {
 {
     NSString *url = dataTask.originalRequest.URL.absoluteString;
 
+    if (url) {
+        [HookLogger log:@"🌐 %@", url];
+    }
+
     if ([url containsString:@"validate"]) {
 
-        [HookLogger log:@"🔥 HIT Alamofire: %@", url];
+        [HookLogger log:@"🔥 HIT %@", url];
 
         NSData *newData = buildFakeData();
 
         if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
-            NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
-
-            if (isGzip(resp)) {
+            if (isGzip((NSHTTPURLResponse *)dataTask.response)) {
                 NSData *gz = gzipCompress(newData);
                 if (gz) newData = gz;
             }
@@ -165,7 +232,7 @@ NSData *buildFakeData(void) {
 
 %end
 
-#pragma mark - 兜底 NSURLSession（防漏）
+#pragma mark - SSL 绕过
 
 %hook NSURLSession
 
@@ -173,7 +240,9 @@ NSData *buildFakeData(void) {
 didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
 
-    NSURLCredential *cred = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+    NSURLCredential *cred =
+    [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+
     completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
 }
 
