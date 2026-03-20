@@ -3,29 +3,70 @@
 #import <zlib.h>
 #import <objc/runtime.h>
 
+#pragma mark - UI 日志面板
+
+@interface HookLogger : NSObject
++ (void)log:(NSString *)fmt, ...;
+@end
+
+@implementation HookLogger
+
+static UITextView *textView;
+
++ (void)initUI {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        if (!win) return;
+
+        UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(10, 100, 350, 300)];
+        panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
+        panel.layer.cornerRadius = 10;
+
+        textView = [[UITextView alloc] initWithFrame:panel.bounds];
+        textView.backgroundColor = [UIColor clearColor];
+        textView.textColor = [UIColor greenColor];
+        textView.font = [UIFont systemFontOfSize:10];
+        textView.editable = NO;
+
+        [panel addSubview:textView];
+        [win addSubview:panel];
+    });
+}
+
++ (void)log:(NSString *)fmt, ... {
+    va_list args;
+    va_start(args, fmt);
+    NSString *str = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+
+    NSLog(@"%@", str);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!textView) return;
+        textView.text = [textView.text stringByAppendingFormat:@"\n%@", str];
+    });
+}
+
+@end
+
 #pragma mark - gzip
 
 NSData *gzipDecompress(NSData *data) {
-    if (!data || data.length == 0) return data;
+    if (!data.length) return data;
 
-    unsigned full = (unsigned)data.length;
-    unsigned half = (unsigned)data.length / 2;
-
-    NSMutableData *out = [NSMutableData dataWithLength:full + half];
-
-    z_stream strm;
-    memset(&strm, 0, sizeof(strm));
+    NSMutableData *out = [NSMutableData dataWithLength:data.length * 2];
+    z_stream strm = {0};
 
     strm.next_in = (Bytef *)data.bytes;
     strm.avail_in = (uInt)data.length;
 
-    if (inflateInit2(&strm, (15+32)) != Z_OK) return nil;
+    if (inflateInit2(&strm, 15+32) != Z_OK) return nil;
 
     while (1) {
         if (strm.total_out >= out.length)
-            out.length += half;
+            out.length += data.length;
 
-        strm.next_out = (Bytef *)out.mutableBytes + strm.total_out;
+        strm.next_out = out.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(out.length - strm.total_out);
 
         int status = inflate(&strm, Z_SYNC_FLUSH);
@@ -43,15 +84,14 @@ NSData *gzipDecompress(NSData *data) {
 }
 
 NSData *gzipCompress(NSData *data) {
-    if (!data || data.length == 0) return data;
-
-    z_stream strm;
-    memset(&strm, 0, sizeof(strm));
-
-    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                     (15+16), 8, Z_DEFAULT_STRATEGY) != Z_OK) return nil;
+    if (!data.length) return data;
 
     NSMutableData *out = [NSMutableData dataWithLength:16384];
+    z_stream strm = {0};
+
+    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                     15+16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        return nil;
 
     strm.next_in = (Bytef *)data.bytes;
     strm.avail_in = (uInt)data.length;
@@ -60,7 +100,7 @@ NSData *gzipCompress(NSData *data) {
         if (strm.total_out >= out.length)
             out.length += 16384;
 
-        strm.next_out = (Bytef *)out.mutableBytes + strm.total_out;
+        strm.next_out = out.mutableBytes + strm.total_out;
         strm.avail_out = (uInt)(out.length - strm.total_out);
 
         deflate(&strm, Z_FINISH);
@@ -68,7 +108,6 @@ NSData *gzipCompress(NSData *data) {
     } while (strm.avail_out == 0);
 
     deflateEnd(&strm);
-
     out.length = strm.total_out;
     return out;
 }
@@ -78,7 +117,7 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
     return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - fake
+#pragma mark - Fake 数据
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -92,80 +131,41 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - 关联对象key
+#pragma mark - Hook Alamofire DataTaskDelegate（核心）
 
-static const void *kBufferKey = &kBufferKey;
+%hook Alamofire_DataTaskDelegate
 
-#pragma mark - Hook
-
-%hook NSObject
-
-// 🔹 收数据（拼包）
-- (void)urlSession:(NSURLSession *)session
+- (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
     didReceiveData:(NSData *)data
 {
-    NSMutableData *buffer = objc_getAssociatedObject(dataTask, kBufferKey);
+    NSString *url = dataTask.originalRequest.URL.absoluteString;
 
-    if (!buffer) {
-        buffer = [NSMutableData data];
-        objc_setAssociatedObject(dataTask, kBufferKey, buffer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
+    if ([url containsString:@"validate"]) {
 
-    [buffer appendData:data];
+        [HookLogger log:@"🔥 HIT Alamofire: %@", url];
 
-    // ❗这里不改数据
-    %orig(session, dataTask, data);
-}
+        NSData *newData = buildFakeData();
 
-// 🔥 最终回调（核心改包点）
-- (void)urlSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error
-{
-    NSMutableData *buffer = objc_getAssociatedObject(task, kBufferKey);
+        if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
+            NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
 
-    if (buffer && task.originalRequest) {
-
-        NSString *url = task.originalRequest.URL.absoluteString;
-
-        if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
-
-            NSLog(@"🔥 FINAL HIT %@", url);
-
-            NSData *finalData = buffer;
-
-            if ([task.response isKindOfClass:[NSHTTPURLResponse class]]) {
-
-                NSHTTPURLResponse *resp = (NSHTTPURLResponse *)task.response;
-
-                // 解 gzip
-                if (isGzip(resp)) {
-                    NSData *de = gzipDecompress(buffer);
-                    if (de) finalData = de;
-                }
-
-                // 替换
-                finalData = buildFakeData();
-
-                // 压回 gzip
-                if (isGzip(resp)) {
-                    NSData *re = gzipCompress(finalData);
-                    if (re) finalData = re;
-                }
+            if (isGzip(resp)) {
+                NSData *gz = gzipCompress(newData);
+                if (gz) newData = gz;
             }
-
-            // ❗关键：替换 buffer 内容
-            [buffer setData:finalData];
         }
+
+        %orig(session, dataTask, newData);
+        return;
     }
 
-    %orig(session, task, error);
+    %orig(session, dataTask, data);
 }
 
 %end
 
-#pragma mark - SSL 绕过
+#pragma mark - 兜底 NSURLSession（防漏）
 
 %hook NSURLSession
 
@@ -173,13 +173,8 @@ didCompleteWithError:(NSError *)error
 didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
 
-    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-        NSURLCredential *cred = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-        completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-        return;
-    }
-
-    %orig(session, challenge, completionHandler);
+    NSURLCredential *cred = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
 }
 
 %end
@@ -187,5 +182,10 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 #pragma mark - ctor
 
 %ctor {
-    NSLog(@"[Tweak] 🚀 Ultimate Hook Loaded");
+    NSLog(@"🚀 Hook Loaded");
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [HookLogger initUI];
+        [HookLogger log:@"✅ UI Ready"];
+    });
 }
