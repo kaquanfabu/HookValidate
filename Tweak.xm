@@ -6,7 +6,7 @@
 
 static UIView *panel;
 
-#pragma mark - 穿透 Window
+#pragma mark - 穿透 Window（关键）
 
 @interface PassThroughWindow : UIWindow
 @end
@@ -17,10 +17,12 @@ static UIView *panel;
 
     UIView *view = [super hitTest:point withEvent:event];
 
+    // 👉 只有 panel 内才响应
     if (view && panel && [view isDescendantOfView:panel]) {
         return view;
     }
 
+    // 👉 其它全部穿透
     return nil;
 }
 
@@ -69,20 +71,16 @@ static BOOL hidden = NO;
 
         [panel addSubview:textView];
 
+        // 拖动
         UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [panel addGestureRecognizer:pan];
 
+        // 双击隐藏
         UITapGestureRecognizer *tap =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
         tap.numberOfTapsRequired = 2;
         [panel addGestureRecognizer:tap];
-
-        // 三指切换（防隐藏后点不到）
-        UITapGestureRecognizer *triple =
-        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
-        triple.numberOfTouchesRequired = 3;
-        [overlayWindow addGestureRecognizer:triple];
 
         [overlayWindow addSubview:panel];
     });
@@ -101,7 +99,9 @@ static BOOL hidden = NO;
 
 + (void)keepAlive {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (overlayWindow) overlayWindow.hidden = NO;
+        if (overlayWindow) {
+            overlayWindow.hidden = NO;
+        }
         [self keepAlive];
     });
 }
@@ -195,7 +195,7 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
     return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - Fake Data
+#pragma mark - Fake
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -209,66 +209,57 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - ⭐ 主拦截（100%命中）
+#pragma mark - Wrapper Hook（最终方案）
 
-%hook NSURLSession
+%hook _NSCFURLSessionDelegateWrapper
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveData:(NSData *)data
 {
-    NSURL *u = request.URL;
-    NSString *host = u.host;
-    NSString *path = u.path;
-    NSString *urlStr = u.absoluteString;
+    NSString *url = dataTask.currentRequest.URL.absoluteString;
 
-    // 🔥 包一层 block（关键）
-    void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
-    ^(NSData *data, NSURLResponse *response, NSError *error) {
-
-        if (urlStr) {
-            [HookLogger log:@"🌐 %@", urlStr];
-        }
-
-        if ([host isEqualToString:@"wap.jx.10086.cn"] &&
-            [path containsString:@"/menu/validate"])
-        {
-            [HookLogger log:@"🔥 HIT validate"];
-
-            NSData *newData = buildFakeData();
-
-            if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-                if (isGzip((NSHTTPURLResponse *)response)) {
-                    NSData *gz = gzipCompress(newData);
-                    if (gz) newData = gz;
-                }
-            }
-
-            completionHandler(newData, response, error);
-            return;
-        }
-
-        completionHandler(data, response, error);
-    };
-
-    // ✅ 再调用 orig（不会报错）
-    return %orig(request, newHandler);
-}
-
-%end
-#pragma mark - 兜底日志
-
-%hook NSURLSessionDataTask
-
-- (void)resume {
-    NSString *url = self.originalRequest.URL.absoluteString;
     if (url) {
-        [HookLogger log:@"📡 TASK %@", url];
+        [HookLogger log:@"🌐 %@", url];
     }
-    %orig;
+
+    // 🎯 命中接口
+    if ([url containsString:@"validate"]) {
+
+        [HookLogger log:@"🔥 HIT %@", url];
+
+        NSData *body = data;
+
+        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
+
+        // ✅ gzip 解压
+        if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
+            NSData *tmp = gzipDecompress(data);
+            if (tmp) body = tmp;
+        }
+
+        NSString *str = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
+        [HookLogger log:@"📦 原始: %@", str];
+
+        // ✅ 构造新数据
+        NSData *newData = buildFakeData();
+
+        // ✅ 如果原本是 gzip → 压回去
+        if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
+            NSData *gz = gzipCompress(newData);
+            if (gz) newData = gz;
+        }
+
+        [HookLogger log:@"✅ 已替换"];
+
+        %orig(session, dataTask, newData);
+        return;
+    }
+
+    %orig(session, dataTask, data);
 }
 
 %end
-
 #pragma mark - SSL 绕过
 
 %hook NSURLSession
