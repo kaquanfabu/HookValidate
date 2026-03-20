@@ -2,6 +2,32 @@
 #import <Foundation/Foundation.h>
 #import <zlib.h>
 
+#pragma mark - 全局
+
+static UIView *panel;
+
+#pragma mark - 穿透 Window（关键）
+
+@interface PassThroughWindow : UIWindow
+@end
+
+@implementation PassThroughWindow
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+
+    UIView *view = [super hitTest:point withEvent:event];
+
+    // 👉 只有 panel 内才响应
+    if (view && panel && [view isDescendantOfView:panel]) {
+        return view;
+    }
+
+    // 👉 其它全部穿透
+    return nil;
+}
+
+@end
+
 #pragma mark - UI Logger
 
 @interface HookLogger : NSObject
@@ -13,7 +39,6 @@
 @implementation HookLogger
 
 static UITextView *textView;
-static UIView *panel;
 static UIWindow *overlayWindow;
 static BOOL hidden = NO;
 
@@ -25,10 +50,11 @@ static BOOL hidden = NO;
 
         CGRect frame = [UIScreen mainScreen].bounds;
 
-        overlayWindow = [[UIWindow alloc] initWithFrame:frame];
+        overlayWindow = [[PassThroughWindow alloc] initWithFrame:frame];
         overlayWindow.windowLevel = UIWindowLevelAlert + 100;
         overlayWindow.backgroundColor = [UIColor clearColor];
         overlayWindow.hidden = NO;
+        overlayWindow.userInteractionEnabled = YES;
 
         UIViewController *vc = [UIViewController new];
         overlayWindow.rootViewController = vc;
@@ -92,8 +118,7 @@ static BOOL hidden = NO;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!textView) return;
 
-        NSString *newText = [textView.text stringByAppendingFormat:@"\n%@", str];
-        textView.text = newText;
+        textView.text = [textView.text stringByAppendingFormat:@"\n%@", str];
 
         NSRange range = NSMakeRange(textView.text.length - 1, 1);
         [textView scrollRangeToVisible:range];
@@ -170,7 +195,7 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
     return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - Fake Data
+#pragma mark - Fake
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -184,7 +209,7 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - Alamofire Hook（核心）
+#pragma mark - Alamofire Hook
 
 %hook Alamofire_DataTaskDelegate
 
