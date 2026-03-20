@@ -6,7 +6,7 @@
 
 static UIView *panel;
 
-#pragma mark - 穿透 Window（关键）
+#pragma mark - 穿透 Window
 
 @interface PassThroughWindow : UIWindow
 @end
@@ -17,12 +17,10 @@ static UIView *panel;
 
     UIView *view = [super hitTest:point withEvent:event];
 
-    // 👉 只有 panel 内才响应
     if (view && panel && [view isDescendantOfView:panel]) {
         return view;
     }
 
-    // 👉 其它全部穿透
     return nil;
 }
 
@@ -71,16 +69,20 @@ static BOOL hidden = NO;
 
         [panel addSubview:textView];
 
-        // 拖动
         UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [panel addGestureRecognizer:pan];
 
-        // 双击隐藏
         UITapGestureRecognizer *tap =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
         tap.numberOfTapsRequired = 2;
         [panel addGestureRecognizer:tap];
+
+        // 三指切换（防隐藏后点不到）
+        UITapGestureRecognizer *triple =
+        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
+        triple.numberOfTouchesRequired = 3;
+        [overlayWindow addGestureRecognizer:triple];
 
         [overlayWindow addSubview:panel];
     });
@@ -99,9 +101,7 @@ static BOOL hidden = NO;
 
 + (void)keepAlive {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (overlayWindow) {
-            overlayWindow.hidden = NO;
-        }
+        if (overlayWindow) overlayWindow.hidden = NO;
         [self keepAlive];
     });
 }
@@ -195,7 +195,7 @@ BOOL isGzip(NSHTTPURLResponse *resp) {
     return e && [e.lowercaseString containsString:@"gzip"];
 }
 
-#pragma mark - Fake
+#pragma mark - Fake Data
 
 NSData *buildFakeData(void) {
     NSDictionary *json = @{
@@ -209,38 +209,54 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - Alamofire Hook
+#pragma mark - ⭐ 主拦截（100%命中）
 
-%hook Alamofire_DataTaskDelegate
+%hook NSURLSession
 
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
 {
-    NSString *url = dataTask.originalRequest.URL.absoluteString;
+    NSString *url = request.URL.absoluteString;
 
-    if (url) {
-        [HookLogger log:@"🌐 %@", url];
-    }
+    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-    if ([url containsString:@"validate"]) {
-
-        [HookLogger log:@"🔥 HIT %@", url];
-
-        NSData *newData = buildFakeData();
-
-        if ([dataTask.response isKindOfClass:[NSHTTPURLResponse class]]) {
-            if (isGzip((NSHTTPURLResponse *)dataTask.response)) {
-                NSData *gz = gzipCompress(newData);
-                if (gz) newData = gz;
-            }
+        if (url) {
+            [HookLogger log:@"🌐 %@", url];
         }
 
-        %orig(session, dataTask, newData);
-        return;
-    }
+        if ([url containsString:@"validate"]) {
 
-    %orig(session, dataTask, data);
+            [HookLogger log:@"🔥 HIT %@", url];
+
+            NSData *newData = buildFakeData();
+
+            if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+                if (isGzip((NSHTTPURLResponse *)response)) {
+                    NSData *gz = gzipCompress(newData);
+                    if (gz) newData = gz;
+                }
+            }
+
+            completionHandler(newData, response, error);
+            return;
+        }
+
+        completionHandler(data, response, error);
+    });
+}
+
+%end
+
+#pragma mark - 兜底日志
+
+%hook NSURLSessionDataTask
+
+- (void)resume {
+    NSString *url = self.originalRequest.URL.absoluteString;
+    if (url) {
+        [HookLogger log:@"📡 TASK %@", url];
+    }
+    %orig;
 }
 
 %end
