@@ -1,76 +1,193 @@
-#import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <zlib.h>
+#import <UIKit/UIKit.h>
 
-#pragma mark - 🎯 目标URL
-static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/validate";
+#pragma mark - UI 日志窗口
 
-#pragma mark - NSURLSession Hook
+@interface HookLoggerView : UIWindow
+@property (nonatomic, strong) UITextView *textView;
++ (instancetype)sharedLogger;
+- (void)log:(NSString *)fmt, ...;
+@end
+
+@implementation HookLoggerView
+
++ (instancetype)sharedLogger {
+    static HookLoggerView *logger;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        CGRect frame = CGRectMake(0, 100, [UIScreen mainScreen].bounds.size.width, 200);
+        logger = [[HookLoggerView alloc] initWithFrame:frame];
+        logger.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
+        logger.windowLevel = UIWindowLevelAlert + 1;
+        logger.hidden = NO;
+
+        logger.textView = [[UITextView alloc] initWithFrame:logger.bounds];
+        logger.textView.backgroundColor = [UIColor clearColor];
+        logger.textView.textColor = [UIColor greenColor];
+        logger.textView.editable = NO;
+        logger.textView.font = [UIFont systemFontOfSize:12];
+        [logger addSubview:logger.textView];
+    });
+    return logger;
+}
+
+- (void)log:(NSString *)fmt, ... {
+    va_list args;
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.textView.text = [self.textView.text stringByAppendingFormat:@"\n%@", msg];
+        [self.textView scrollRangeToVisible:NSMakeRange(self.textView.text.length, 1)];
+    });
+}
+
+@end
+
+#pragma mark - 目标 URL 判断
+
+BOOL isTarget(NSURLRequest *req) {
+    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
+}
+
+#pragma mark - 构造伪造数据
+
+NSData *buildFakeData() {
+    long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+    NSDictionary *fake = @{
+        @"sing": [NSNull null],
+        @"data": [NSNull null],
+        @"code": @0,
+        @"message": @"请求成功",
+        @"success": @YES,
+        @"skey": [NSNull null],
+        @"timestamp": @(timestamp)
+    };
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
+
+    [[HookLoggerView sharedLogger] log:@"[FakeData] %@", [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding]];
+    return jsonData;
+}
+
+#pragma mark - NSURLSession Hook (completionHandler)
 
 %hook NSURLSession
 
-// 拦截 NSURLSession 的 dataTaskWithRequest 方法
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-{
-    NSString *url = request.URL.absoluteString;
+                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
-    // 只拦截目标 URL
-    if ([url isEqualToString:targetURL]) {
-        // 伪造的 JSON 响应数据
-        NSDictionary *fakeResponseDict = @{
-            @"sing": [NSNull null],
-            @"data": [NSNull null],
-            @"code": @0,
-            @"message": @"请求成功",
-            @"success": @YES,
-            @"skey": [NSNull null],
-            @"timestamp": @1773899566825
+    if (isTarget(request)) {
+
+        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
+        ^(NSData *data, NSURLResponse *response, NSError *error) {
+
+            NSData *newData = buildFakeData();
+
+            NSHTTPURLResponse *oldResp = (NSHTTPURLResponse *)response;
+            NSDictionary *headers = @{
+                @"Content-Type": @"application/json;charset=UTF-8",
+                @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)newData.length]
+            };
+
+            NSHTTPURLResponse *newResp =
+            [[NSHTTPURLResponse alloc] initWithURL:oldResp.URL
+                                        statusCode:200
+                                       HTTPVersion:@"HTTP/1.1"
+                                      headerFields:headers];
+
+            [[HookLoggerView sharedLogger] log:@"[NSURLSession] URL: %@\nResponse: %@", request.URL.absoluteString, [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]];
+
+            completionHandler(newData, newResp, nil);
         };
 
-        // 将字典转为 NSData
-        NSData *fakeResponseData = [NSJSONSerialization dataWithJSONObject:fakeResponseDict options:0 error:nil];
-
-        // 创建伪造的响应体
-        NSURLResponse *fakeResponse = [[NSURLResponse alloc] initWithURL:request.URL
-                                                               MIMEType:@"application/json"
-                                                  expectedContentLength:fakeResponseData.length
-                                                       textEncodingName:@"utf-8"];
-
-        // 使用 dataTaskWithRequest 来创建任务
-        NSURLSessionDataTask *fakeTask = [self dataTaskWithRequest:request];
-
-        // 将伪造的数据作为响应返回
-        [fakeTask setValue:fakeResponse forKey:@"response"];
-        [fakeTask setValue:fakeResponseData forKey:@"data"];
-
-        return fakeTask;
+        return %orig(request, newHandler);
     }
 
-    // 如果不拦截目标 URL，调用原始方法
+    return %orig(request, completionHandler);
+}
+
+%end
+
+#pragma mark - NSURLSessionTask Delegate (AFNetworking / Alamofire)
+
+%hook NSURLSessionTask
+
+- (void)setState:(NSURLSessionTaskState)state {
+    %orig;
+
+    if (state == NSURLSessionTaskStateCompleted) {
+        NSURLRequest *req = self.currentRequest;
+        if (!isTarget(req)) return;
+
+        NSData *newData = buildFakeData();
+
+        NSHTTPURLResponse *oldResp = (NSHTTPURLResponse *)self.response;
+        NSDictionary *headers = @{
+            @"Content-Type": @"application/json;charset=UTF-8",
+            @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)newData.length]
+        };
+
+        NSHTTPURLResponse *newResp =
+        [[NSHTTPURLResponse alloc] initWithURL:oldResp.URL
+                                    statusCode:200
+                                   HTTPVersion:@"HTTP/1.1"
+                                  headerFields:headers];
+
+        [self setValue:newData forKey:@"_responseData"];
+        [self setValue:newResp forKey:@"_response"];
+
+        [[HookLoggerView sharedLogger] log:@"[DelegateHook] URL: %@\nResponse: %@", req.URL.absoluteString, [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]];
+    }
+}
+
+%end
+
+#pragma mark - NSURLConnection Hook (delegate)
+
+%hook NSObject
+
+// 拦截 delegate 回调：接收 response
+- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response {
+    if (isTarget(connection.currentRequest)) {
+        NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:response.URL
+                                                                  statusCode:200
+                                                                 HTTPVersion:@"HTTP/1.1"
+                                                                headerFields:@{@"Content-Type": @"application/json;charset=UTF-8"}];
+        [self setValue:newResp forKey:@"_response"];
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked response", connection.currentRequest.URL.absoluteString];
+    }
+    %orig(connection, response);
+}
+
+// 拦截 delegate 回调：接收 data
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
+    if (isTarget(connection.currentRequest)) {
+        NSData *newData = buildFakeData();
+        [self setValue:newData forKey:@"_data"];
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked data", connection.currentRequest.URL.absoluteString];
+        return; // 拦截原始数据
+    }
+    %orig(connection, data);
+}
+
+// 完成回调
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection {
+    if (isTarget(connection.currentRequest)) {
+        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, finished loading", connection.currentRequest.URL.absoluteString];
+    }
+    %orig(connection);
+}
+
+%end
+
+#pragma mark - NSURLConnection canHandleRequest
+
+%hook NSURLConnection
+
++ (BOOL)canHandleRequest:(NSURLRequest *)request {
+    if (isTarget(request)) return YES;
     return %orig;
 }
 
 %end
-
-#pragma mark - SSL 绕过
-
-%hook NSURLSession
-
-- (void)URLSession:(NSURLSession *)session
-didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
-completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
-
-    NSURLCredential *cred =
-    [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-
-    completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-}
-
-%end
-
-#pragma mark - ctor
-
-%ctor {
-    NSLog(@"🚀 Hook Loaded");
-    // 可以选择去掉日志部分，避免 `HookLogger` 错误。
-}
