@@ -1,61 +1,41 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <zlib.h>
-#import <objc/runtime.h>
 
 #pragma mark - UI Logger
 
 @interface HookLogger : NSObject
 + (void)initUI;
 + (void)log:(NSString *)fmt, ...;
++ (void)keepAlive;
 @end
 
 @implementation HookLogger
 
 static UITextView *textView;
 static UIView *panel;
+static UIWindow *overlayWindow;
 static BOOL hidden = NO;
 
-+ (UIWindow *)getKeyWindow {
-
-    UIWindow *win = nil;
-
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive &&
-                [scene isKindOfClass:[UIWindowScene class]]) {
-
-                UIWindowScene *ws = (UIWindowScene *)scene;
-
-                for (UIWindow *w in ws.windows) {
-                    if (w.isKeyWindow) {
-                        win = w;
-                        break;
-                    }
-                }
-            }
-            if (win) break;
-        }
-    } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        win = [UIApplication sharedApplication].keyWindow;
-#pragma clang diagnostic pop
-    }
-
-    return win;
-}
-
 + (void)initUI {
+
     dispatch_async(dispatch_get_main_queue(), ^{
 
-        UIWindow *win = [self getKeyWindow];
-        if (!win) return;
+        if (overlayWindow) return;
+
+        CGRect frame = [UIScreen mainScreen].bounds;
+
+        overlayWindow = [[UIWindow alloc] initWithFrame:frame];
+        overlayWindow.windowLevel = UIWindowLevelAlert + 100;
+        overlayWindow.backgroundColor = [UIColor clearColor];
+        overlayWindow.hidden = NO;
+
+        UIViewController *vc = [UIViewController new];
+        overlayWindow.rootViewController = vc;
 
         panel = [[UIView alloc] initWithFrame:CGRectMake(20, 120, 320, 260)];
         panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.75];
         panel.layer.cornerRadius = 10;
-        panel.clipsToBounds = YES;
 
         textView = [[UITextView alloc] initWithFrame:panel.bounds];
         textView.backgroundColor = [UIColor clearColor];
@@ -65,18 +45,18 @@ static BOOL hidden = NO;
 
         [panel addSubview:textView];
 
-        // ✅ 拖动手势
+        // 拖动
         UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [panel addGestureRecognizer:pan];
 
-        // ✅ 双击隐藏
+        // 双击隐藏
         UITapGestureRecognizer *tap =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
         tap.numberOfTapsRequired = 2;
         [panel addGestureRecognizer:tap];
 
-        [win addSubview:panel];
+        [overlayWindow addSubview:panel];
     });
 }
 
@@ -89,6 +69,15 @@ static BOOL hidden = NO;
 + (void)toggle {
     hidden = !hidden;
     panel.alpha = hidden ? 0.1 : 1.0;
+}
+
++ (void)keepAlive {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (overlayWindow) {
+            overlayWindow.hidden = NO;
+        }
+        [self keepAlive];
+    });
 }
 
 + (void)log:(NSString *)fmt, ... {
@@ -106,7 +95,6 @@ static BOOL hidden = NO;
         NSString *newText = [textView.text stringByAppendingFormat:@"\n%@", str];
         textView.text = newText;
 
-        // 自动滚动
         NSRange range = NSMakeRange(textView.text.length - 1, 1);
         [textView scrollRangeToVisible:range];
     });
@@ -255,6 +243,7 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         [HookLogger initUI];
+        [HookLogger keepAlive];
         [HookLogger log:@"✅ UI Ready"];
     });
 }
