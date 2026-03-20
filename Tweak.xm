@@ -209,10 +209,9 @@ NSData *buildFakeData(void) {
 
 static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/validate";
 
-#pragma mark - 🔥 Wrapper Hook（核心）
-#pragma mark - Alamofire.SessionDelegate Hook
+#pragma mark - Alamofire Wrapper Hook
 
-%hook Alamofire.SessionDelegate
+%hook __NSCFURLSessionDelegateWrapper
 
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
@@ -220,25 +219,31 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
 {
     NSString *url = dataTask.currentRequest.URL.absoluteString;
 
-    // 只拦截目标 URL
-    if ([url isEqualToString:targetURL]) {
-        [HookLogger log:@"🔥 命中接口: %@", url];
+    if (url) {
+        [HookLogger log:@"🌐 %@", url];
+    }
+
+    // 🎯 精准匹配目标 URL
+    if (url && [url isEqualToString:targetURL]) {
+
+        [HookLogger log:@"🔥 精准命中 %@", url];
 
         NSData *body = data;
         NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
 
-        // 处理 gzip 压缩
+        // 解压 gzip
         if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
             NSData *tmp = gzipDecompress(data);
             if (tmp) body = tmp;
         }
 
         NSString *str = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
-        [HookLogger log:@"📦 原始返回: %@", str];
+        [HookLogger log:@"📦 原始: %@", str];
 
         // 替换数据
         NSData *newData = buildFakeData();
 
+        // 如果原来是 gzip → 压回去
         if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
             NSData *gz = gzipCompress(newData);
             if (gz) newData = gz;
