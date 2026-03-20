@@ -16,9 +16,7 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
 
     // 只拦截目标 URL
     if ([url isEqualToString:targetURL]) {
-        [HookLogger log:@"🔥 拦截目标 URL 请求: %@", url];
-
-        // 创建伪造的 JSON 响应数据
+        // 伪造的 JSON 响应数据
         NSDictionary *fakeResponseDict = @{
             @"sing": [NSNull null],
             @"data": [NSNull null],
@@ -38,12 +36,13 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
                                                   expectedContentLength:fakeResponseData.length
                                                        textEncodingName:@"utf-8"];
 
-        // 创建并返回伪造的 task
-        NSURLSessionDataTask *fakeTask = [[NSURLSessionDataTask alloc] init];
+        // 使用 dataTaskWithRequest 来创建任务
+        NSURLSessionDataTask *fakeTask = [self dataTaskWithRequest:request];
+
+        // 将伪造的数据作为响应返回
         [fakeTask setValue:fakeResponse forKey:@"response"];
         [fakeTask setValue:fakeResponseData forKey:@"data"];
 
-        [HookLogger log:@"🔥 返回伪造的响应数据: %@", fakeResponseDict];
         return fakeTask;
     }
 
@@ -73,10 +72,5 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredentia
 
 %ctor {
     NSLog(@"🚀 Hook Loaded");
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [HookLogger initUI];
-        [HookLogger keepAlive];
-        [HookLogger log:@"✅ UI Ready"];
-    });
+    // 可以选择去掉日志部分，避免 `HookLogger` 错误。
 }
