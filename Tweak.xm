@@ -17,12 +17,10 @@ static UIView *panel;
 
     UIView *view = [super hitTest:point withEvent:event];
 
-    // 👉 只有 panel 内才响应
     if (view && panel && [view isDescendantOfView:panel]) {
         return view;
     }
 
-    // 👉 其它全部穿透
     return nil;
 }
 
@@ -71,12 +69,10 @@ static BOOL hidden = NO;
 
         [panel addSubview:textView];
 
-        // 拖动
         UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [panel addGestureRecognizer:pan];
 
-        // 双击隐藏
         UITapGestureRecognizer *tap =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggle)];
         tap.numberOfTapsRequired = 2;
@@ -209,7 +205,11 @@ NSData *buildFakeData(void) {
     return [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
 }
 
-#pragma mark - Wrapper Hook（最终方案）
+#pragma mark - 🎯 目标URL
+
+static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/validate";
+
+#pragma mark - 🔥 Wrapper Hook（核心）
 
 %hook _NSCFURLSessionDelegateWrapper
 
@@ -223,16 +223,13 @@ NSData *buildFakeData(void) {
         [HookLogger log:@"🌐 %@", url];
     }
 
-    // 🎯 命中接口
-    if ([url containsString:@"validate"]) {
+    if (url && [url isEqualToString:targetURL]) {
 
-        [HookLogger log:@"🔥 HIT %@", url];
+        [HookLogger log:@"🔥 精准命中 %@", url];
 
         NSData *body = data;
-
         NSHTTPURLResponse *resp = (NSHTTPURLResponse *)dataTask.response;
 
-        // ✅ gzip 解压
         if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
             NSData *tmp = gzipDecompress(data);
             if (tmp) body = tmp;
@@ -241,16 +238,14 @@ NSData *buildFakeData(void) {
         NSString *str = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
         [HookLogger log:@"📦 原始: %@", str];
 
-        // ✅ 构造新数据
         NSData *newData = buildFakeData();
 
-        // ✅ 如果原本是 gzip → 压回去
         if ([resp isKindOfClass:[NSHTTPURLResponse class]] && isGzip(resp)) {
             NSData *gz = gzipCompress(newData);
             if (gz) newData = gz;
         }
 
-        [HookLogger log:@"✅ 已替换"];
+        [HookLogger log:@"✅ 已替换返回"];
 
         %orig(session, dataTask, newData);
         return;
@@ -260,6 +255,7 @@ NSData *buildFakeData(void) {
 }
 
 %end
+
 #pragma mark - SSL 绕过
 
 %hook NSURLSession
