@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <zlib.h>
 
-#pragma mark - gzip
+#pragma mark - gzip 压缩
 NSData *gzipCompress(NSData *data) {
     if (!data || data.length == 0) return data;
 
@@ -36,7 +36,7 @@ NSData *gzipCompress(NSData *data) {
     return compressed;
 }
 
-#pragma mark - JSON
+#pragma mark - 构造 JSON
 NSData *buildJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
@@ -53,11 +53,12 @@ NSData *buildJSON() {
     return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
+#pragma mark - 判断目标请求
 BOOL isTarget(NSURLRequest *req) {
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
-#pragma mark - 核心 Hook（稳定版）
+#pragma mark - 核心 Hook（拦截 Alamofire + NSURLSession）
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -65,7 +66,7 @@ BOOL isTarget(NSURLRequest *req) {
 
     if (isTarget(request)) {
 
-        NSLog(@"[Hook] 命中接口");
+        NSLog(@"[Hook] 🎯 命中接口");
 
         __block void (^origHandler)(NSData *, NSURLResponse *, NSError *) = completionHandler;
 
@@ -91,13 +92,15 @@ BOOL isTarget(NSURLRequest *req) {
             });
         };
 
-        return %orig(request, newHandler); // ✅ 关键：必须返回 task
+        return %orig(request, newHandler); // 确保 task 正常返回
     }
 
     return %orig(request, completionHandler);
 }
 
-#pragma mark - SSL绕过（稳定）
+%end
+
+#pragma mark - SSL 绕过（不影响证书验证）
 - (void)URLSession:(NSURLSession *)session
         didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
           completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
@@ -110,6 +113,41 @@ BOOL isTarget(NSURLRequest *req) {
     }
 
     %orig(session, challenge, completionHandler);
+}
+
+%end
+
+#pragma mark - NSURLSessionTask delegate Hook（兼容 Alamofire delegate）
+%hook NSURLSessionTask
+
+- (void)setState:(NSURLSessionTaskState)state {
+    %orig;
+
+    if (state == NSURLSessionTaskStateCompleted) {
+        NSURLRequest *req = self.currentRequest;
+        if (!isTarget(req)) return;
+
+        NSData *jsonData = buildJSON();
+        NSData *gzipData = gzipCompress(jsonData);
+
+        if ([self respondsToSelector:@selector(setValue:forKey:)]) {
+            @try {
+                [self setValue:gzipData forKey:@"_responseData"];
+            } @catch (NSException *exception) {
+                NSLog(@"[Hook] KVC _responseData failed: %@", exception);
+            }
+        }
+    }
+}
+
+%end
+
+#pragma mark - NSURLConnection Hook（兼容旧版网络库）
+%hook NSURLConnection
+
++ (BOOL)canHandleRequest:(NSURLRequest *)request {
+    if (isTarget(request)) return YES;
+    return %orig;
 }
 
 %end
