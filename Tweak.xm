@@ -209,9 +209,9 @@ NSData *buildFakeData(void) {
 
 static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/validate";
 
-#pragma mark - Alamofire Wrapper Hook
+#pragma mark - 🔥 Hook Alamofire SessionDelegate
 
-%hook __NSCFURLSessionDelegateWrapper
+%hook Alamofire.SessionDelegate
 
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)dataTask
@@ -219,12 +219,8 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
 {
     NSString *url = dataTask.currentRequest.URL.absoluteString;
 
-    if (url) {
-        [HookLogger log:@"🌐 %@", url];
-    }
-
-    // 🎯 精准匹配目标 URL
-    if (url && [url isEqualToString:targetURL]) {
+    // 精确匹配目标 URL
+    if ([url isEqualToString:targetURL]) {
 
         [HookLogger log:@"🔥 精准命中 %@", url];
 
@@ -240,7 +236,6 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
         NSString *str = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
         [HookLogger log:@"📦 原始: %@", str];
 
-        // 替换数据
         NSData *newData = buildFakeData();
 
         // 如果原来是 gzip → 压回去
@@ -259,6 +254,7 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
 }
 
 %end
+
 #pragma mark - SSL 绕过
 
 %hook NSURLSession
