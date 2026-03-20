@@ -1,60 +1,115 @@
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
+#import <zlib.h>
 
-#pragma mark - UI 日志窗口
+#pragma mark - gzip 解压
+NSData *gzipDecompress(NSData *data) {
+    if (!data || data.length == 0) return data;
 
-@interface HookLoggerView : UIWindow
-@property (nonatomic, strong) UITextView *textView;
-+ (instancetype)sharedLogger;
-- (void)log:(NSString *)fmt, ...;
-@end
+    unsigned full_length = (unsigned)data.length;
+    unsigned half_length = (unsigned)data.length / 2;
 
-@implementation HookLoggerView
+    NSMutableData *decompressed = [NSMutableData dataWithLength:full_length + half_length];
 
-+ (instancetype)sharedLogger {
-    static HookLoggerView *logger;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        CGRect frame = CGRectMake(0, 100, [UIScreen mainScreen].bounds.size.width, 200);
-        logger = [[HookLoggerView alloc] initWithFrame:frame];
-        logger.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
-        logger.windowLevel = UIWindowLevelAlert + 1;
-        logger.hidden = NO;
+    BOOL done = NO;
+    int status;
 
-        logger.textView = [[UITextView alloc] initWithFrame:logger.bounds];
-        logger.textView.backgroundColor = [UIColor clearColor];
-        logger.textView.textColor = [UIColor greenColor];
-        logger.textView.editable = NO;
-        logger.textView.font = [UIFont systemFontOfSize:12];
-        [logger addSubview:logger.textView];
-    });
-    return logger;
+    z_stream strm;
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (unsigned)data.length;
+    strm.total_out = 0;
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+
+    if (inflateInit2(&strm, 15 + 32) != Z_OK) return nil;
+
+    while (!done) {
+        if (strm.total_out >= decompressed.length) {
+            decompressed.length += half_length;
+        }
+
+        strm.next_out = (Bytef *)decompressed.mutableBytes + strm.total_out;
+        strm.avail_out = (unsigned)(decompressed.length - strm.total_out);
+
+        status = inflate(&strm, Z_SYNC_FLUSH);
+
+        if (status == Z_STREAM_END) {
+            done = YES;
+        } else if (status != Z_OK && status != Z_ERRNO && status != Z_DATA_ERROR) {
+            inflateEnd(&strm);
+            return nil;
+        }
+    }
+
+    if (inflateEnd(&strm) != Z_OK) return nil;
+
+    if (done) {
+        decompressed.length = strm.total_out;
+        return decompressed;
+    }
+
+    return nil;
 }
 
-- (void)log:(NSString *)fmt, ... {
-    va_list args;
-    va_start(args, fmt);
-    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
-    va_end(args);
+#pragma mark - gzip 压缩
+NSData *gzipCompress(NSData *data) {
+    if (!data || data.length == 0) return data;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.textView.text = [self.textView.text stringByAppendingFormat:@"\n%@", msg];
-        [self.textView scrollRangeToVisible:NSMakeRange(self.textView.text.length, 1)];
-    });
+    z_stream strm;
+    memset(&strm, 0, sizeof(strm));
+
+    if (deflateInit2(&strm,
+                     Z_DEFAULT_COMPRESSION,
+                     Z_DEFLATED,
+                     15 + 16,
+                     8,
+                     Z_DEFAULT_STRATEGY) != Z_OK) {
+        return nil;
+    }
+
+    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
+
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (uInt)data.length;
+
+    int status;
+
+    do {
+        if (strm.total_out >= compressed.length) {
+            compressed.length += 16384;
+        }
+
+        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
+        strm.avail_out = (uInt)(compressed.length - strm.total_out);
+
+        status = deflate(&strm, Z_FINISH);
+
+    } while (status == Z_OK);
+
+    deflateEnd(&strm);
+
+    if (status != Z_STREAM_END) {
+        return nil;
+    }
+
+    compressed.length = strm.total_out;
+    return compressed;
 }
 
-@end
+#pragma mark - 判断gzip
+BOOL isGzip(NSHTTPURLResponse *response) {
+    NSString *encoding = response.allHeaderFields[@"Content-Encoding"];
+    return [encoding.lowercaseString containsString:@"gzip"];
+}
 
-#pragma mark - 目标 URL 判断
-
+#pragma mark - 目标URL判断
 BOOL isTarget(NSURLRequest *req) {
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
-#pragma mark - 构造伪造数据
-
+#pragma mark - 构造假数据
 NSData *buildFakeData() {
     long long timestamp = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+
     NSDictionary *fake = @{
         @"sing": [NSNull null],
         @"data": [NSNull null],
@@ -64,41 +119,32 @@ NSData *buildFakeData() {
         @"skey": [NSNull null],
         @"timestamp": @(timestamp)
     };
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
 
-    [[HookLoggerView sharedLogger] log:@"[FakeData] %@", [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding]];
-    return jsonData;
+    return [NSJSONSerialization dataWithJSONObject:fake options:0 error:nil];
 }
 
-#pragma mark - NSURLSession Hook (completionHandler)
-
+#pragma mark - NSURLSession Hook (completionHandler + SSL Pinning)
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
-
-        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
-        ^(NSData *data, NSURLResponse *response, NSError *error) {
+        __weak typeof(self) weakSelf = self;
+        void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            __strong typeof(self) strongSelf = weakSelf;
+            if (!strongSelf) return;
 
             NSData *newData = buildFakeData();
+            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+            if (isGzip(http)) {
+                newData = gzipCompress(newData);
+            }
 
-            NSHTTPURLResponse *oldResp = (NSHTTPURLResponse *)response;
-            NSDictionary *headers = @{
-                @"Content-Type": @"application/json;charset=UTF-8",
-                @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)newData.length]
-            };
-
-            NSHTTPURLResponse *newResp =
-            [[NSHTTPURLResponse alloc] initWithURL:oldResp.URL
-                                        statusCode:200
-                                       HTTPVersion:@"HTTP/1.1"
-                                      headerFields:headers];
-
-            [[HookLoggerView sharedLogger] log:@"[NSURLSession] URL: %@\nResponse: %@", request.URL.absoluteString, [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]];
-
-            completionHandler(newData, newResp, nil);
+            // 保证回调在主线程
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completionHandler(newData, response, error);
+            });
         };
 
         return %orig(request, newHandler);
@@ -109,8 +155,7 @@ NSData *buildFakeData() {
 
 %end
 
-#pragma mark - NSURLSessionTask Delegate (AFNetworking / Alamofire)
-
+#pragma mark - NSURLSessionTask Hook (Alamofire delegate 模式)
 %hook NSURLSessionTask
 
 - (void)setState:(NSURLSessionTaskState)state {
@@ -121,68 +166,25 @@ NSData *buildFakeData() {
         if (!isTarget(req)) return;
 
         NSData *newData = buildFakeData();
+        NSHTTPURLResponse *resp = (NSHTTPURLResponse *)self.response;
+        if (isGzip(resp)) {
+            newData = gzipCompress(newData);
+        }
 
-        NSHTTPURLResponse *oldResp = (NSHTTPURLResponse *)self.response;
-        NSDictionary *headers = @{
-            @"Content-Type": @"application/json;charset=UTF-8",
-            @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)newData.length]
-        };
-
-        NSHTTPURLResponse *newResp =
-        [[NSHTTPURLResponse alloc] initWithURL:oldResp.URL
-                                    statusCode:200
-                                   HTTPVersion:@"HTTP/1.1"
-                                  headerFields:headers];
-
-        [self setValue:newData forKey:@"_responseData"];
-        [self setValue:newResp forKey:@"_response"];
-
-        [[HookLoggerView sharedLogger] log:@"[DelegateHook] URL: %@\nResponse: %@", req.URL.absoluteString, [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]];
+        // KVC 安全替换 _responseData
+        if ([self respondsToSelector:@selector(setValue:forKey:)]) {
+            @try {
+                [self setValue:newData forKey:@"_responseData"];
+            } @catch (NSException *exception) {
+                NSLog(@"[Hook] KVC set _responseData failed: %@", exception);
+            }
+        }
     }
 }
 
 %end
 
-#pragma mark - NSURLConnection Hook (delegate)
-
-%hook NSObject
-
-// 拦截 delegate 回调：接收 response
-- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response {
-    if (isTarget(connection.currentRequest)) {
-        NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:response.URL
-                                                                  statusCode:200
-                                                                 HTTPVersion:@"HTTP/1.1"
-                                                                headerFields:@{@"Content-Type": @"application/json;charset=UTF-8"}];
-        [self setValue:newResp forKey:@"_response"];
-        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked response", connection.currentRequest.URL.absoluteString];
-    }
-    %orig(connection, response);
-}
-
-// 拦截 delegate 回调：接收 data
-- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
-    if (isTarget(connection.currentRequest)) {
-        NSData *newData = buildFakeData();
-        [self setValue:newData forKey:@"_data"];
-        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, hooked data", connection.currentRequest.URL.absoluteString];
-        return; // 拦截原始数据
-    }
-    %orig(connection, data);
-}
-
-// 完成回调
-- (void)connectionDidFinishLoading:(NSURLConnection *)connection {
-    if (isTarget(connection.currentRequest)) {
-        [[HookLoggerView sharedLogger] log:@"[NSURLConnection] URL: %@, finished loading", connection.currentRequest.URL.absoluteString];
-    }
-    %orig(connection);
-}
-
-%end
-
-#pragma mark - NSURLConnection canHandleRequest
-
+#pragma mark - 防 AFNetworking / NSURLConnection
 %hook NSURLConnection
 
 + (BOOL)canHandleRequest:(NSURLRequest *)request {
