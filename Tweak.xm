@@ -1,10 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <zlib.h>
-#import <Alamofire/Alamofire.h>
 
 #pragma mark - 🎯 目标URL
-
 static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/validate";
 
 #pragma mark - NSURLSession Hook
@@ -16,8 +14,9 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
 {
     NSString *url = request.URL.absoluteString;
 
+    // 只拦截目标 URL
     if ([url isEqualToString:targetURL]) {
-        [HookLogger log:@"🔥 拦截 Alamofire 请求: %@", url];
+        [HookLogger log:@"🔥 拦截目标 URL 请求: %@", url];
 
         // 创建伪造的 JSON 响应数据
         NSDictionary *fakeResponseDict = @{
@@ -29,6 +28,8 @@ static NSString *targetURL = @"https://wap.jx.10086.cn/nwgt/web/api/v1/menu/vali
             @"skey": [NSNull null],
             @"timestamp": @1773899566825
         };
+
+        // 将字典转为 NSData
         NSData *fakeResponseData = [NSJSONSerialization dataWithJSONObject:fakeResponseDict options:0 error:nil];
 
         // 创建伪造的响应体
