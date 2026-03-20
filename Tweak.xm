@@ -216,17 +216,23 @@ NSData *buildFakeData(void) {
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler
 {
-    NSString *url = request.URL.absoluteString;
+    NSURL *u = request.URL;
+    NSString *host = u.host;
+    NSString *path = u.path;
+    NSString *urlStr = u.absoluteString;
 
-    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
+    // 🔥 包一层 block（关键）
+    void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
+    ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-        if (url) {
-            [HookLogger log:@"🌐 %@", url];
+        if (urlStr) {
+            [HookLogger log:@"🌐 %@", urlStr];
         }
 
-        if ([url containsString:@"validate"]) {
-
-            [HookLogger log:@"🔥 HIT %@", url];
+        if ([host isEqualToString:@"wap.jx.10086.cn"] &&
+            [path containsString:@"/menu/validate"])
+        {
+            [HookLogger log:@"🔥 HIT validate"];
 
             NSData *newData = buildFakeData();
 
@@ -242,11 +248,13 @@ NSData *buildFakeData(void) {
         }
 
         completionHandler(data, response, error);
-    });
+    };
+
+    // ✅ 再调用 orig（不会报错）
+    return %orig(request, newHandler);
 }
 
 %end
-
 #pragma mark - 兜底日志
 
 %hook NSURLSessionDataTask
