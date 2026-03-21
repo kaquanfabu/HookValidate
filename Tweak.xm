@@ -1,28 +1,5 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 构造 JSON（你可以后面再改结构）
-NSData *buildJSON() {
-    long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-
-    NSDictionary *obj = @{
-        @"sing": [NSNull null],
-        @"data": [NSNull null],
-        @"code": @0,
-        @"message": @"请求成功",
-        @"success": @YES,
-        @"skey": [NSNull null],
-        @"timestamp": @(ts)
-    };
-
-    NSError *error = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&error];
-    if (error) {
-        NSLog(@"[Hook] JSON 生成失败: %@", error);
-        return nil;
-    }
-    return jsonData;
-}
-
 #pragma mark - 判断目标请求
 BOOL isTarget(NSURLRequest *req) {
     NSString *urlString = req.URL.absoluteString;
@@ -61,19 +38,13 @@ BOOL isTarget(NSURLRequest *req) {
                 return;
             }
 
-            // 替换数据
-            NSData *newData = buildJSON();
-            if (!newData) {
-                // 如果构建 JSON 数据失败，直接返回原数据
-                if (completionHandler) {
-                    completionHandler(data, response, error);
-                }
-                return;
-            }
+            // 直接替换返回数据，不需要转义字符
+            NSString *modifiedResponse = @"{\"sing\": null, \"data\": null, \"code\": 0, \"message\": \"请求成功\", \"success\": true, \"skey\": null, \"timestamp\": 1773899566825}";
+            NSData *newData = [modifiedResponse dataUsingEncoding:NSUTF8StringEncoding];
 
             // 打印修改后的数据
             dispatch_async(dispatch_get_main_queue(), ^{
-                NSLog(@"[Hook] 修改后的返回: %@", [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]);
+                NSLog(@"[Hook] 修改后的返回: %@", modifiedResponse);
             });
 
             // 返回修改后的数据
