@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 构造 JSON
+#pragma mark - 构造 JSON（你可以后面再改结构）
 NSData *buildJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
@@ -22,7 +22,6 @@ BOOL isTarget(NSURLRequest *req) {
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
-#pragma mark - 核心 Hook（NSURLSession / Alamofire）
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -30,58 +29,45 @@ BOOL isTarget(NSURLRequest *req) {
 
     if (isTarget(request)) {
 
-        NSLog(@"[Hook] 🎯 命中接口");
+        // ✅ 防递归
+        if ([request valueForHTTPHeaderField:@"X-Hooked"]) {
+            return %orig(request, completionHandler);
+        }
+
+        NSMutableURLRequest *req = [request mutableCopy];
+        [req setValue:@"1" forHTTPHeaderField:@"X-Hooked"];
 
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-            NSData *json = buildJSON();
+            NSLog(@"[Hook] 🎯 命中接口");
 
-            NSDictionary *headers = @{
-                @"Content-Type": @"application/json;charset=UTF-8"
-            };
+            // ✅ 打印原始返回（用于你后面对比结构）
+            if (data) {
+                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                NSLog(@"[Hook] 原始返回: %@", str);
+            }
 
-            NSHTTPURLResponse *resp =
-            [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                        statusCode:200
-                                       HTTPVersion:@"HTTP/1.1"
-                                      headerFields:headers];
+            // ❗ 如果原本就失败，别乱改（避免逻辑炸）
+            if (error) {
+                if (completionHandler) {
+                    completionHandler(data, response, error);
+                }
+                return;
+            }
 
-            completionHandler(json, resp, nil);
+            // ✅ 替换数据（只改这里！）
+            NSData *newData = buildJSON();
+
+            if (completionHandler) {
+                completionHandler(newData, response, error);
+            }
         };
 
-        return %orig(request, newHandler);
+        return %orig(req, newHandler);
     }
 
     return %orig(request, completionHandler);
-}
-
-#pragma mark - SSL 绕过（必须写在同一个 hook 里）
-
-- (void)URLSession:(NSURLSession *)session
-didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
-completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
-
-    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-
-        NSURLCredential *cred =
-        [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-
-        completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
-        return;
-    }
-
-    %orig(session, challenge, completionHandler);
-}
-
-%end
-
-#pragma mark - NSURLConnection（兼容旧库，可选）
-%hook NSURLConnection
-
-+ (BOOL)canHandleRequest:(NSURLRequest *)request {
-    if (isTarget(request)) return YES;
-    return %orig;
 }
 
 %end
