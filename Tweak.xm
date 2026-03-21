@@ -9,7 +9,7 @@ BOOL isTarget(NSURLRequest *req) {
     return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
-%hook%hook NSURLSession
+%hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
