@@ -3,77 +3,78 @@
 #pragma mark - 判断目标请求
 BOOL isTarget(NSURLRequest *req) {
     NSString *urlString = req.URL.absoluteString;
-    NSLog(@"[Hook] 检查 URL: %@", urlString);  // 打印请求 URL，用于调试
-
-    // 使用更精确的匹配方式，确保只匹配特定请求
+    NSLog(@"[Hook] 检查 URL: %@", urlString);
     return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
+}
+
+#pragma mark - 伪造响应数据
+NSData *createMockData() {
+    // 使用紧凑格式，去掉多余空格和换行
+    // 修正后的 Hook 代码
+NSString *modifiedResponseStr = "{\"sing\":null,\"data\":null,\"code\":0,\"message\":\"请求成功\",\"success\":true,\"skey\":null,\"timestamp\":1773899566825}";
+
+// 将字符串转换为 NSData
+NSData *modifiedResponseData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
+
+// 调用原始方法或直接返回修改后的数据
+// ...
+";
+    return [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
 }
 
 %hook NSURLSession
 
+// ==================== Hook 1: 处理 POST 请求 (关键修复) ====================
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                                   uploadData:(NSData *)bodyData
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
-
-    // 1. 判断是否命中目标
     if (isTarget(request)) {
-        NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
+        NSLog(@"[Hook] 🎯 命中 POST 接口: %@", request.URL.absoluteString);
 
-        // 2. 定义我们自己的回调处理逻辑
-        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
-        ^(NSData *data, NSURLResponse *response, NSError *error) {
-            
-            // --- 错误处理 ---
-            if (error) {
-                NSLog(@"[Hook] ⚠️ 请求出错，直接返回原始错误");
-                if (completionHandler) {
-                    completionHandler(data, response, error);
-                }
-                return;
-            }
+        // 构造伪造数据
+        NSData *mockData = createMockData();
 
-            // --- 打印原始数据 ---
-            if (data) {
-                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                NSLog(@"[Hook] 📄 原始返回: %@", str);
-            }
+        // 打印原始和伪造数据
+        NSString *origStr = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
+        NSLog(@"[Hook] 📄 原始请求体: %@", origStr);
+        NSLog(@"[Hook] 🔓 伪造响应数据: %@", [[NSString alloc] initWithData:mockData encoding:NSUTF8StringEncoding]);
 
-            // --- 构造伪造数据 ---
-            // 去掉所有换行和空格，使用紧凑格式
-            NSString *modifiedResponseStr = @"{\"code\":0,\"message\":\"请求成功\",\"success\":true,\"timestamp\":1774093881179,\"data\":null}";
+        // 模拟异步返回
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            completionHandler(mockData, [NSHTTPURLResponse new], nil);
+        });
 
-
-            NSData *newData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSLog(@"[Hook] 🔓 修改后的返回: %@", modifiedResponseStr);
-            });
-
-            // --- 执行原始回调，但传入伪造的数据 ---
-            if (completionHandler) {
-                completionHandler(newData, response, error);
-            }
-        };
-
-        // ================= 核心修复区域 =================
-        
-        // 1. 调用 %orig 执行原始的网络请求逻辑，传入新的回调，并**接收返回的 Task 对象**
-        // 注意：必须用 id 或 NSURLSessionDataTask * 接收返回值
-        NSURLSessionDataTask *task = %orig(request, newHandler);
-        
-        // 2. 必须手动调用 resume，因为原始任务创建后是暂停状态
-        if (task) {
-            [task resume];
-        } else {
-            NSLog(@"[Hook] ❌ 任务创建失败，task 为 nil");
-        }
-
-        // 3. **必须返回** 这个 task 对象给调用者
+        // 创建并返回一个空的 Task，防止崩溃
+        NSURLSessionDataTask *task = [NSURLSessionDataTask new];
+        [task resume];
         return task;
-        
-        // ==============================================
     }
 
-    // 如果没有命中目标，直接执行原始逻辑并返回
+    // 未命中，执行原始逻辑
+    return %orig(request, bodyData, completionHandler);
+}
+
+// ==================== Hook 2: 处理 GET 请求 (备用) ====================
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    if (isTarget(request)) {
+        NSLog(@"[Hook] 🎯 命中 GET 接口: %@", request.URL.absoluteString);
+
+        // 构造伪造数据
+        NSData *mockData = createMockData();
+
+        // 模拟异步返回
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            completionHandler(mockData, [NSHTTPURLResponse new], nil);
+        });
+
+        // 创建并返回一个空的 Task，防止崩溃
+        NSURLSessionDataTask *task = [NSURLSessionDataTask new];
+        [task resume];
+        return task;
+    }
+
+    // 未命中，执行原始逻辑
     return %orig(request, completionHandler);
 }
 
