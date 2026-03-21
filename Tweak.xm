@@ -15,9 +15,9 @@ BOOL isTarget(NSURLRequest *req) {
         NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
 
         // 定义新的回调
-        void (^newHandler)(NSData *, NSURLResponse *, NSError *) = 
+        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *originalResponse, NSError *error) {
-            
+
             // --- 1. 错误处理 ---
             if (error) {
                 NSLog(@"[Hook] ⚠️ 原始请求出错: %@", error);
@@ -32,29 +32,33 @@ BOOL isTarget(NSURLRequest *req) {
             NSData *fakeData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
 
             // --- 3. 关键修复：构造新的 Response ---
-            // 原始的 originalResponse 可能是服务器返回的（包含 Gzip 或 Content-Length 为 0）
-            // 我们必须创建一个新的 Response，告诉 App："我返回的是 JSON，长度是 xxx"
-            
-            // 获取原始请求的 URL
-            NSURL *responseURL = request.URL;
-            
-            // 构造新的 HTTP Response
+            // 注意：我们不能简单地用 headerFields:@{...}，因为这样会丢失服务器原有的其他头信息
+            // 我们需要基于原始的 Response 进行修改
+
+            NSHTTPURLResponse *originalHTTPResponse = (NSHTTPURLResponse *)originalResponse;
+            NSMutableDictionary *mutableHeaders = [originalHTTPResponse.allHeaderFields mutableCopy];
+
+            // --- 核心修改点 ---
+            // 移除 Content-Encoding，防止系统尝试解压我们的明文数据
+            [mutableHeaders removeObjectForKey:@"Content-Encoding"];
+            // 确保 Content-Length 是正确的
+            [mutableHeaders setObject:[NSString stringWithFormat:@"%lu", (unsigned long)fakeData.length] forKey:@"Content-Length"];
+            // 确保 Content-Type 正确
+            [mutableHeaders setObject:@"application/json; charset=utf-8" forKey:@"Content-Type"];
+
             NSHTTPURLResponse *newResponse = [[NSHTTPURLResponse alloc]
-                initWithURL:responseURL
+                initWithURL:request.URL
                 statusCode:200
                 HTTPVersion:@"HTTP/1.1"
-                headerFields:@{
-                    @"Content-Type": @"application/json; charset=utf-8",
-                    @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)fakeData.length]
-                }];
+                headerFields:mutableHeaders];
 
             // --- 4. 异步打印日志 ---
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSLog(@"[Hook] 🔓 拦截并修改返回: %@", jsonStr);
             });
 
-                completionHandler(fakeData, newResponse, nil);
-            
+            // 调用完成回调
+            completionHandler(fakeData, newResponse, nil);
         };
 
         // --- 6. 执行原始逻辑 ---
