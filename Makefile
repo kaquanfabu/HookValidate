@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = HookValidate
 
-HookValidate_FILES = Tweak.xm
+HookValidate_FILES = Tweak.xm Resources/FloatingLogView.m
 HookValidate_FRAMEWORKS = UIKit Foundation
 HookNet_CFLAGS = -fobjc-arc
 include $(THEOS_MAKE_PATH)/tweak.mk
