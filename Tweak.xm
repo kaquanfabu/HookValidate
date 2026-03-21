@@ -38,8 +38,10 @@ static NSData *buildJSON() {
             completionHandler(fakeData, fakeResp, nil);
         });
 
-        // 返回一个假的 NSURLSessionDataTask 对象，不会实际发送请求
-        return [[NSURLSessionDataTask alloc] init];  // 返回一个空的任务对象
+        // 创建一个假的NSURLSessionDataTask任务，立即取消它
+        NSURLSessionDataTask *dummyTask = [NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {}];
+        [dummyTask cancel]; // 确保不发送请求
+        return dummyTask;   // 返回假的任务
     }
 
     // 默认返回真实的任务
