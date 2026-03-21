@@ -1,3 +1,15 @@
+#import <Foundation/Foundation.h>
+#import <Alamofire/Alamofire.h>
+
+#pragma mark - 判断目标请求
+BOOL isTarget(NSURLRequest *req) {
+    NSString *urlString = req.URL.absoluteString;
+    NSLog(@"[Hook] 检查 URL: %@", urlString);  // 打印请求 URL，用于调试
+
+    // 使用更精确的匹配方式，确保只匹配特定请求
+    return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
+}
+
 %hook AlamofireSessionManager
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
