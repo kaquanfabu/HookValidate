@@ -34,20 +34,14 @@ BOOL isTarget(NSURLRequest *req) {
     if (isTarget(request)) {
         NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
 
-        // ✅ 防递归
-        if ([request valueForHTTPHeaderField:@"X-Hooked"]) {
-            NSLog(@"[Hook] 跳过递归请求: %@", request.URL.absoluteString);
-            return %orig(request, completionHandler);
-        }
-
-        // 拷贝请求以修改它
-        NSMutableURLRequest *req = [request mutableCopy];
-        [req setValue:@"1" forHTTPHeaderField:@"X-Hooked"];  // 防止递归
+        // 直接使用原始请求，不需要拷贝
+        NSURLRequest *req = request;
 
         // 创建新的处理回调
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
-            // 打印原始数据
+            NSLog(@"[Hook] 进入新回调");
+
             if (data) {
                 NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                 NSLog(@"[Hook] 原始返回: %@", str);
@@ -55,6 +49,7 @@ BOOL isTarget(NSURLRequest *req) {
 
             // 如果请求出错，返回原数据
             if (error) {
+                NSLog(@"[Hook] 错误发生: %@", error);
                 if (completionHandler) {
                     completionHandler(data, response, error);
                 }
@@ -65,7 +60,9 @@ BOOL isTarget(NSURLRequest *req) {
             NSData *newData = buildJSON();
 
             // 打印替换后的数据
-            NSLog(@"[Hook] 修改后的返回: %@", [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSLog(@"[Hook] 修改后的返回: %@", [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]);
+            });
 
             // 返回修改后的数据
             if (completionHandler) {
@@ -73,8 +70,12 @@ BOOL isTarget(NSURLRequest *req) {
             }
         };
 
-        // 执行原始请求，并传递新的回调
-        return %orig(req, newHandler);
+        // 使用新的 session 执行请求
+        NSURLSession *session = [NSURLSession sharedSession];
+        NSURLSessionDataTask *task = [session dataTaskWithRequest:req completionHandler:newHandler];
+        [task resume];
+
+        return task;  // 返回实际的任务，确保它被正确执行
     }
 
     return %orig(request, completionHandler);
