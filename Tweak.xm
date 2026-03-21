@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #pragma mark - 构造 JSON
-NSData *buildJSON() {
+static NSData *buildJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
     NSDictionary *obj = @{
@@ -14,15 +14,12 @@ NSData *buildJSON() {
         @"timestamp": @(ts)
     };
 
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-    if (!jsonData) {
-        NSLog(@"[Hook] 构建 JSON 数据失败");
-    }
-    return jsonData;
+    return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
 #pragma mark - 判断目标请求
-BOOL isTarget(NSURLRequest *req) {
+static BOOL isTarget(NSURLRequest *req) {
+    if (!req.URL) return NO;
     return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
@@ -31,41 +28,48 @@ BOOL isTarget(NSURLRequest *req) {
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
-    if (isTarget(request)) {
-        NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
-        NSLog(@"[Hook] 请求头: %@", request.allHTTPHeaderFields);
-
-        // ✅ 直接调用原始网络任务，不替换 completionHandler
-        NSURLSessionDataTask *task = %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
-
-            NSLog(@"[Hook] 原始回调触发");
-
-            // 如果发生错误，直接返回
-            if (error) {
-                NSLog(@"[Hook] 错误: %@", error.localizedDescription);
-                if (completionHandler) {
-                    completionHandler(data, response, error);
-                }
-                return;
-            }
-
-            // ✅ 替换返回数据
-            NSData *newData = buildJSON();
-            if (!newData) {
-                newData = data; // 失败回退原数据
-            }
-
-            NSLog(@"[Hook] 返回伪造 JSON");
-
-            if (completionHandler) {
-                completionHandler(newData, response, error);
-            }
-        });
-
-        return task;
+    // 非目标请求直接放行
+    if (!isTarget(request)) {
+        return %orig(request, completionHandler);
     }
 
-    return %orig(request, completionHandler);
+    NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
+
+    // ✅ 关键：先保存原始 handler
+    void (^origHandler)(NSData *, NSURLResponse *, NSError *) = completionHandler;
+
+    // ✅ 新 handler（只处理返回，不阻塞请求）
+    void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
+    ^(NSData *data, NSURLResponse *response, NSError *error) {
+
+        NSLog(@"[Hook] 原始回调触发");
+
+        // 出错直接返回原数据
+        if (error) {
+            NSLog(@"[Hook] 错误: %@", error);
+            if (origHandler) origHandler(data, response, error);
+            return;
+        }
+
+        // 打印原始数据（调试用）
+        if (data) {
+            NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            NSLog(@"[Hook] 原始返回: %@", str);
+        }
+
+        // ✅ 替换返回
+        NSData *newData = buildJSON();
+        if (!newData) newData = data;
+
+        NSLog(@"[Hook] ✅ 返回伪造数据");
+
+        if (origHandler) {
+            origHandler(newData, response, error);
+        }
+    };
+
+    // ✅ 关键：调用原始方法（不会阻塞网络）
+    return %orig(request, newHandler);
 }
 
 %end
