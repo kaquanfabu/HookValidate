@@ -38,17 +38,10 @@ BOOL isTarget(NSURLRequest *req) {
             }
 
             // --- 构造伪造数据 ---
-            NSString *modifiedResponseStr = @"{ \
-                \"sing\" : null, \
-                \"data\" : { \
-                    \"validateItem\" : \"0,1,2,3,4\" \
-                }, \
-                \"code\" : 0, \
-                \"message\" : \"请求成功\", \
-                \"success\" : true, \
-                \"skey\" : null, \
-                \"timestamp\" : 1774093881179 \
-            }";
+            // 去掉所有换行和空格，使用紧凑格式
+            NSString *modifiedResponseStr = @"{\"code\":0,\"message\":\"请求成功\",\"success\":true,\"timestamp\":1774093881179,\"data\":null}";
+
+
             NSData *newData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
 
             dispatch_async(dispatch_get_main_queue(), ^{
