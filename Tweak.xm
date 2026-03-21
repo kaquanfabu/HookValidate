@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 
+static NSMutableDictionary *dataMap;
+
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
@@ -17,33 +19,74 @@ static NSData *buildJSON() {
 
 %hook NSURLSession
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                               completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+- (instancetype)init {
+    self = %orig;
+    if (self) {
+        dataMap = [NSMutableDictionary dictionary];  // 初始化缓存
+    }
+    return self;
+}
 
-    NSString *url = request.URL.absoluteString;
+#pragma mark - 收包（分段接收）
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)task
+    didReceiveData:(NSData *)data {
+
+    NSString *url = task.currentRequest.URL.absoluteString;
 
     if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        NSNumber *key = @((uintptr_t)task);
 
-        // 构造假返回
-        NSData *fakeData = buildJSON();
-        NSHTTPURLResponse *fakeResp = [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                                                  statusCode:200
-                                                                 HTTPVersion:@"HTTP/1.1"
-                                                                headerFields:@{@"Content-Type":@"application/json"}];
+        // 创建一个缓存数据
+        NSMutableData *cache = dataMap[key];
+        if (!cache) {
+            cache = [NSMutableData data];
+            dataMap[key] = cache;
+        }
 
-        // 调度到主队列，模拟异步返回
-        dispatch_async(dispatch_get_main_queue(), ^{
-            completionHandler(fakeData, fakeResp, nil);
-        });
+        // 缓存每次接收到的分段数据
+        [cache appendData:data];
 
-        // 创建一个假的NSURLSessionDataTask任务，立即取消它
-        NSURLSessionDataTask *dummyTask = [NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {}];
-        [dummyTask cancel]; // 确保不发送请求
-        return dummyTask;   // 返回假的任务
+        // ❗ 不让原数据往下走
+        return;
     }
 
-    // 默认返回真实的任务
-    return %orig(request, completionHandler);
+    %orig(session, task, data);
+}
+
+#pragma mark - 请求完成（拼接数据并返回）
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+didCompleteWithError:(NSError *)error {
+
+    NSString *url = task.currentRequest.URL.absoluteString;
+
+    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        NSNumber *key = @((uintptr_t)task);
+        NSMutableData *cache = dataMap[key];
+
+        if (cache) {
+            NSString *origin = [[NSString alloc] initWithData:cache encoding:NSUTF8StringEncoding];
+            NSLog(@"[Hook] 原始返回: %@", origin);
+
+            // 拼接所有的分段数据
+            NSData *newData = buildJSON();  // 这里是你自己构造的伪数据
+
+            NSLog(@"[Hook] ✅ 拼接并替换返回");
+
+            // 模拟回传
+            dispatch_async(dispatch_get_main_queue(), ^{
+                // 调用完成回调
+                %orig(session, (NSURLSessionDataTask *)task, newData);
+            });
+
+            // 清除缓存
+            [dataMap removeObjectForKey:key];
+            return;
+        }
+    }
+
+    %orig(session, task, error);
 }
 
 %end
