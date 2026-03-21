@@ -14,7 +14,13 @@ NSData *buildJSON() {
         @"timestamp": @(ts)
     };
 
-    return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+    NSError *error = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&error];
+    if (error) {
+        NSLog(@"[Hook] JSON 生成失败: %@", error);
+        return nil;
+    }
+    return jsonData;
 }
 
 #pragma mark - 判断目标请求
@@ -40,8 +46,7 @@ BOOL isTarget(NSURLRequest *req) {
         // 创建新的处理回调
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
-            NSLog(@"[Hook] 进入新回调");
-
+            // 打印原始数据
             if (data) {
                 NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                 NSLog(@"[Hook] 原始返回: %@", str);
@@ -58,8 +63,15 @@ BOOL isTarget(NSURLRequest *req) {
 
             // 替换数据
             NSData *newData = buildJSON();
+            if (!newData) {
+                // 如果构建 JSON 数据失败，直接返回原数据
+                if (completionHandler) {
+                    completionHandler(data, response, error);
+                }
+                return;
+            }
 
-            // 打印替换后的数据
+            // 打印修改后的数据
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSLog(@"[Hook] 修改后的返回: %@", [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]);
             });
