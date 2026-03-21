@@ -6,6 +6,27 @@ BOOL isTarget(NSURLRequest *req) {
     return [urlString containsString:@"/nwgt/web/api/v1/menu/validate"];
 }
 
+// 1. 声明一个私有协议，用于处理任务完成的回调
+@protocol URLSessionTaskDelegateHook <NSURLSessionTaskDelegate>
+@end
+
+// 2. 实现协议的私有 Category
+@interface NSURLSessionTask (Hook) <URLSessionTaskDelegateHook>
+@end
+
+@implementation NSURLSessionTask (Hook)
+
+// 这是代理方法的实现，当任务完成时会调用这里
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    // 在这里处理状态更新逻辑
+    // 如果你需要让 App 认为成功，可以忽略 error 或者传入 nil
+    // 注意：这里不能直接用 %orig，因为这是 Category 实现
+    // 我们通过消息转发来调用原始实现
+    [self forwardInvocation:[NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(URLSession:task:didCompleteWithError:)]]];
+}
+
+@end
+
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -14,48 +35,33 @@ BOOL isTarget(NSURLRequest *req) {
     if (isTarget(request)) {
         NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
 
-        // --- 1. 保存原始的 completionHandler ---
-        __block typeof(completionHandler) originalCompletion = completionHandler;
-
-        // --- 2. 定义新的回调 ---
+        // 定义新的回调
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            // 伪造数据
-            NSString *modifiedResponseStr = @"{\"code\":0,\"message\":\"请求成功\",\"success\":true,\"timestamp\":1774093881179,\"data\":null}";
+            // --- 构造伪造数据 ---
+            NSString *modifiedResponseStr = @"{\"code\":0,\"message\":\"请求成功\",\"success\":true,\"data\":null}";
             NSData *newData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
 
-            // 异步打印
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSLog(@"[Hook] 🔓 拦截并修改返回: %@", modifiedResponseStr);
-            });
-
-            // 调用原始回调，传入伪造数据
-            if (originalCompletion) {
-                originalCompletion(newData, response, nil);
+            // --- 调用原始回调 ---
+            if (completionHandler) {
+                completionHandler(newData, response, nil);
             }
         };
 
-        // --- 3. Hook 代理回调 ---
-        // 检查并替换代理回调方法
-        if ([self respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-            // Logos 风格的 Hook：直接覆盖原方法
-            %c(self).instanceMethodForSelector(@selector(URLSession:task:didCompleteWithError:)) = ^(id self, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
-                NSLog(@"[Hook] 🛡️ 代理回调被拦截: %@", task.originalRequest.URL);
-                // 关键：使用 %orig 调用原始的代理回调逻辑
-                %orig(session, task, nil); // 传入 nil 表示任务“成功”完成
-            };
-        }
-
-        // --- 4. 执行原始逻辑 ---
+        // --- 执行原始逻辑，获取任务对象 ---
         NSURLSessionDataTask *task = %orig(request, newHandler);
 
         if (task) {
+            // --- 关键修复：设置任务的代理为当前任务自身 ---
+            // 这样当系统调用代理方法时，就会进入上面的 Category 实现
+            task.delegate = (id<NSURLSessionTaskDelegate>)task;
+
             [task resume];
         }
 
         return task;
     }
 
-    // 非目标请求，走原始逻辑
+    // 不是目标请求，走原始逻辑
     return %orig(request, completionHandler);
 }
 
