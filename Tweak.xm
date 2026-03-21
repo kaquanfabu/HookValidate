@@ -1,50 +1,12 @@
 #import <Foundation/Foundation.h>
-#import <zlib.h>
 
-#pragma mark - Gzip 压缩
-NSData *gzipCompress(NSData *data) {
-    if (!data || data.length == 0) return data;
-
-    z_stream strm;
-    memset(&strm, 0, sizeof(strm));
-
-    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
-        return nil;
-
-    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
-
-    strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (uInt)data.length;
-
-    int status;
-    do {
-        if (strm.total_out >= compressed.length)
-            compressed.length += 16384;
-
-        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
-        strm.avail_out = (uInt)(compressed.length - strm.total_out);
-
-        status = deflate(&strm, Z_FINISH);
-
-    } while (status == Z_OK);
-
-    deflateEnd(&strm);
-
-    if (status != Z_STREAM_END) return nil;
-
-    compressed.length = strm.total_out;
-    return compressed;
-}
-
-#pragma mark - 构造 JSON 并 Gzip 压缩
-NSData *buildAndCompressJSON() {
+#pragma mark - 构造 JSON（你可以后面再改结构）
+NSData *buildJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
     NSDictionary *obj = @{
         @"sing": [NSNull null],
-        @"data": @{
-            @"validateItem": @"0"
-        },
+        @"data": [NSNull null],
         @"code": @0,
         @"message": @"请求成功",
         @"success": @YES,
@@ -52,35 +14,46 @@ NSData *buildAndCompressJSON() {
         @"timestamp": @(ts)
     };
 
-    // 将字典转为 JSON 数据
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-
-    // 使用 gzip 压缩 JSON 数据
-    return gzipCompress(jsonData);
+    return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
-#pragma mark - 返回的 JSON 响应（带 Gzip 压缩）
+#pragma mark - 判断目标请求
+BOOL isTarget(NSURLRequest *req) {
+    NSString *urlString = req.URL.absoluteString;
+    NSLog(@"[Hook] 检查 URL: %@", urlString);  // 打印请求 URL，用于调试
+
+    // 使用更精确的匹配方式，确保只匹配特定请求
+    return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
+}
+
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
+        NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
 
-        // 防止递归调用
+        // ✅ 防递归
         if ([request valueForHTTPHeaderField:@"X-Hooked"]) {
+            NSLog(@"[Hook] 跳过递归请求: %@", request.URL.absoluteString);
             return %orig(request, completionHandler);
         }
 
+        // 拷贝请求以修改它
         NSMutableURLRequest *req = [request mutableCopy];
-        [req setValue:@"1" forHTTPHeaderField:@"X-Hooked"];
+        [req setValue:@"1" forHTTPHeaderField:@"X-Hooked"];  // 防止递归
 
+        // 创建新的处理回调
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
+            // 打印原始数据
+            if (data) {
+                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                NSLog(@"[Hook] 原始返回: %@", str);
+            }
 
-            NSLog(@"[Hook] 🎯 命中接口");
-
-            // 如果有错误，原样返回
+            // 如果请求出错，返回原数据
             if (error) {
                 if (completionHandler) {
                     completionHandler(data, response, error);
@@ -88,26 +61,19 @@ NSData *buildAndCompressJSON() {
                 return;
             }
 
-            // 获取并压缩 JSON 数据
-            NSData *compressedData = buildAndCompressJSON();
+            // 替换数据
+            NSData *newData = buildJSON();
 
-            // 设置压缩后的数据和响应头
-            NSDictionary *headers = @{
-                @"Content-Type": @"application/json;charset=UTF-8",
-                @"Content-Encoding": @"gzip"
-            };
+            // 打印替换后的数据
+            NSLog(@"[Hook] 修改后的返回: %@", [[NSString alloc] initWithData:newData encoding:NSUTF8StringEncoding]);
 
-            NSHTTPURLResponse *resp =
-            [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                        statusCode:200
-                                       HTTPVersion:@"HTTP/1.1"
-                                      headerFields:headers];
-
+            // 返回修改后的数据
             if (completionHandler) {
-                completionHandler(compressedData, resp, nil);
+                completionHandler(newData, response, error);
             }
         };
 
+        // 执行原始请求，并传递新的回调
         return %orig(req, newHandler);
     }
 
