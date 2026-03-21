@@ -47,14 +47,14 @@ static NSData *buildJSON() {
 
         [cache appendData:data];
 
-        // ❗ 拦截，不让原数据往下走
+        // ❗ 不往下传原始数据
         return;
     }
 
     %orig(session, task, data);
 }
 
-#pragma mark - 请求完成（在这里改返回）
+#pragma mark - 请求完成（在这里注入假数据）
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error {
@@ -73,12 +73,17 @@ didCompleteWithError:(NSError *)error {
 
             NSData *newData = buildJSON();
 
-            NSLog(@"[Hook] ✅ 已替换返回");
+            NSLog(@"[Hook] ✅ 注入假数据");
 
-            // ✅ 关键：把“假数据”喂回 Alamofire
-            %orig(session, (NSURLSessionDataTask *)task, newData);
+            // ✅ 关键：手动调用 didReceiveData，把假数据喂回去
+            _logos_orig$_ungrouped$SessionDelegate$URLSession$dataTask$didReceiveData$(
+                self, _cmd, session, (NSURLSessionDataTask *)task, newData
+            );
 
             [dataMap removeObjectForKey:key];
+
+            // ✅ 再调用完成（必须传 NSError）
+            %orig(session, task, nil);
             return;
         }
     }
