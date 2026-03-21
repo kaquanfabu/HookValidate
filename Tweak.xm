@@ -32,53 +32,37 @@ BOOL isTarget(NSURLRequest *req) {
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
     if (isTarget(request)) {
-        NSLog(@"[Hook] 🎯 命中接口");
+        NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
+        NSLog(@"[Hook] 请求头: %@", request.allHTTPHeaderFields);
 
-        // 直接拦截请求，不做防递归和标识的检查
-        NSMutableURLRequest *req = [request mutableCopy];
+        // ✅ 直接调用原始网络任务，不替换 completionHandler
+        NSURLSessionDataTask *task = %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
 
-        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
-        ^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSLog(@"[Hook] 原始回调触发");
 
-            // ✅ 打印原始返回（用于你后面对比结构）
-            if (data) {
-                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                NSLog(@"[Hook] 原始返回: %@", str);
-            }
-
-            // ❗ 如果原本就失败，别乱改（避免逻辑炸）
+            // 如果发生错误，直接返回
             if (error) {
-                NSLog(@"[Hook] 错误发生: %@", error.localizedDescription);
+                NSLog(@"[Hook] 错误: %@", error.localizedDescription);
                 if (completionHandler) {
-                    // 确保错误发生时调用completionHandler并返回原始数据
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        completionHandler(data, response, error);
-                    });
+                    completionHandler(data, response, error);
                 }
                 return;
             }
 
-            // ✅ 替换数据（只改这里！）
+            // ✅ 替换返回数据
             NSData *newData = buildJSON();
             if (!newData) {
-                NSLog(@"[Hook] 替换数据失败，返回原始数据");
-                newData = data;  // 确保如果替换失败仍然返回原数据
+                newData = data; // 失败回退原数据
             }
 
-            // 确保返回数据
+            NSLog(@"[Hook] 返回伪造 JSON");
+
             if (completionHandler) {
-                NSLog(@"[Hook] 调用completionHandler，返回数据");
-                // 确保在主线程中返回数据
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    completionHandler(newData, response, error);
-                });
-            } else {
-                NSLog(@"[Hook] 没有调用completionHandler，检查是否调用正确");
+                completionHandler(newData, response, error);
             }
-        };
+        });
 
-        // 返回新的 dataTask
-        return %orig(req, newHandler);
+        return task;
     }
 
     return %orig(request, completionHandler);
