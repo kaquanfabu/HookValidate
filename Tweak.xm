@@ -74,10 +74,14 @@ didCompleteWithError:(NSError *)error {
             NSLog(@"[Hook] ✅ 返回模拟数据");
 
             // 模拟回传数据，直接用 newData 替代原始数据
-            // 调用 %orig 来完成任务，但传递 newData 而不是原始的 response data
+            // 跳过调用 %orig，直接模拟响应，不再传递多余的参数
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 这里我们不再直接调用 NSURLResponse，而是正确地通过 task 来模拟完成任务
-                %orig(session, task, newData, nil);  // 使用 newData 和 nil 传递模拟数据和无错误
+                // 模拟请求完成，使用 newData 作为响应数据
+                // 这里我们通过手动创建回调模拟请求完成，不需要调用 %orig
+                if (!error) {
+                    // 模拟成功返回数据
+                    [task.response URLSession:session task:task didCompleteWithError:nil];
+                }
             });
 
             // 清除缓存
