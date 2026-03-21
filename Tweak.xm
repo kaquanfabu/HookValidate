@@ -1,5 +1,8 @@
 #import <Foundation/Foundation.h>
 
+#pragma mark - 声明并初始化 dataMap
+static NSMutableDictionary *dataMap;  // 声明全局缓存变量
+
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
@@ -75,7 +78,7 @@ didCompleteWithError:(NSError *)error {
             // 模拟回传
             dispatch_async(dispatch_get_main_queue(), ^{
                 // 这里传递 nil 给 NSError * 参数
-                %orig(session, (NSURLSessionDataTask *)task, nil);
+                %orig(session, (NSURLSessionDataTask *)task, nil);  // 这里传递 nil 表示没有错误，表示成功
             });
 
             // 清除缓存
