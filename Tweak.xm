@@ -6,7 +6,12 @@ NSData *buildJSON() {
 
     NSDictionary *obj = @{
         @"sing": [NSNull null],
-        @"data": [NSNull null],
+
+        // ✅ 关键修复：data 不再是 null
+        @"data": @{
+            @"validateItem": @"0"
+        },
+
         @"code": @0,
         @"message": @"请求成功",
         @"success": @YES,
