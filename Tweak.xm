@@ -1,15 +1,4 @@
-#import <Foundation/Foundation.h>
-
-#pragma mark - 判断目标请求
-BOOL isTarget(NSURLRequest *req) {
-    NSString *urlString = req.URL.absoluteString;
-    NSLog(@"[Hook] 检查 URL: %@", urlString);  // 打印请求 URL，用于调试
-
-    // 使用更精确的匹配方式，确保只匹配特定请求
-    return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
-}
-
-%hook NSURLSession
+%hook AlamofireSessionManager
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
@@ -57,7 +46,7 @@ BOOL isTarget(NSURLRequest *req) {
                 NSLog(@"[Hook] 修改后的返回: %@", modifiedResponse);
             });
 
-            // 返回修改后的数据
+            // 返回修改后的数据，确保只调用一次
             if (completionHandler) {
                 completionHandler(newData, response, error);
             }
