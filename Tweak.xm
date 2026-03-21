@@ -17,7 +17,7 @@ static NSData *buildJSON() {
     return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
-%hook%hook NSURLSession
+%hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                                completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
@@ -38,10 +38,11 @@ static NSData *buildJSON() {
             completionHandler(fakeData, fakeResp, nil);
         });
 
-        // 返回一个 dummy task，不会真正发请求
-        return %orig;
+        // 返回一个假的 NSURLSessionDataTask 对象，不会实际发送请求
+        return [[NSURLSessionDataTask alloc] init];  // 返回一个空的任务对象
     }
 
+    // 默认返回真实的任务
     return %orig(request, completionHandler);
 }
 
