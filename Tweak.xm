@@ -39,7 +39,7 @@ BOOL isTarget(NSURLRequest *req) {
             }
 
             // 直接替换返回数据，不需要转义字符
-            NSString *modifiedResponse = @"{\"sing\": null, \"data\": null, \"code\": 0, \"message\": \"请求成功\", \"success\": true, \"skey\": null, \"timestamp\": 1773899566825}";
+            NSString *modifiedResponse = @"{"sing": null, "data": null, "code": 0, "message": "请求成功", "success": true, "skey": null, "timestamp": 1773899566825}";
             NSData *newData = [modifiedResponse dataUsingEncoding:NSUTF8StringEncoding];
 
             // 打印修改后的数据
