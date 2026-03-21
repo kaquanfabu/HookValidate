@@ -17,78 +17,32 @@ static NSData *buildJSON() {
     return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
-%hook SessionDelegate
+%hook%hook NSURLSession
 
-// 初始化缓存
-- (instancetype)init {
-    self = %orig;
-    if (self) {
-        dataMap = [NSMutableDictionary dictionary];
-    }
-    return self;
-}
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                               completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
 
-#pragma mark - 收包（拦截数据流）
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)task
-    didReceiveData:(NSData *)data {
+    NSString *url = request.URL.absoluteString;
 
-    NSString *url = task.currentRequest.URL.absoluteString;
+    if ([url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
 
-    if (url && [url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+        // 构造假返回
+        NSData *fakeData = buildJSON();
+        NSHTTPURLResponse *fakeResp = [[NSHTTPURLResponse alloc] initWithURL:request.URL
+                                                                  statusCode:200
+                                                                 HTTPVersion:@"HTTP/1.1"
+                                                                headerFields:@{@"Content-Type":@"application/json"}];
 
-        NSNumber *key = @((uintptr_t)task);
+        // 调度到主队列，模拟异步返回
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completionHandler(fakeData, fakeResp, nil);
+        });
 
-        NSMutableData *cache = dataMap[key];
-        if (!cache) {
-            cache = [NSMutableData data];
-            dataMap[key] = cache;
-        }
-
-        [cache appendData:data];
-
-        // ❗ 不往下传原始数据
-        return;
+        // 返回一个 dummy task，不会真正发请求
+        return %orig;
     }
 
-    %orig(session, task, data);
-}
-
-#pragma mark - 请求完成（在这里注入假数据）
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error {
-
-    NSString *url = task.currentRequest.URL.absoluteString;
-
-    if (url && [url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
-
-        NSNumber *key = @((uintptr_t)task);
-        NSMutableData *cache = dataMap[key];
-
-        if (cache) {
-
-            NSString *origin = [[NSString alloc] initWithData:cache encoding:NSUTF8StringEncoding];
-            NSLog(@"[Hook] 原始返回: %@", origin);
-
-            NSData *newData = buildJSON();
-
-            NSLog(@"[Hook] ✅ 注入假数据");
-
-            // ✅ 关键：手动调用 didReceiveData，把假数据喂回去
-            _logos_orig$_ungrouped$SessionDelegate$URLSession$dataTask$didReceiveData$(
-                self, _cmd, session, (NSURLSessionDataTask *)task, newData
-            );
-
-            [dataMap removeObjectForKey:key];
-
-            // ✅ 再调用完成（必须传 NSError）
-            %orig(session, task, nil);
-            return;
-        }
-    }
-
-    %orig(session, task, error);
+    return %orig(request, completionHandler);
 }
 
 %end
