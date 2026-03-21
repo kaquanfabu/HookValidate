@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 声明并初始化 dataMap
-static NSMutableDictionary *dataMap;  // 声明全局缓存变量
-
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
@@ -20,11 +17,10 @@ static NSData *buildJSON() {
 
 %hook NSURLSession
 
-// 初始化方法
 - (instancetype)init {
     self = %orig;
     if (self) {
-        dataMap = [NSMutableDictionary dictionary];  // 初始化缓存字典
+        dataMap = [NSMutableDictionary dictionary];  // 初始化缓存
     }
     return self;
 }
@@ -68,14 +64,15 @@ didCompleteWithError:(NSError *)error {
         NSMutableData *cache = dataMap[key];
 
         if (cache) {
-            // 拼接数据（但因为没有分段，这里其实没有必要拼接）
-            NSData *newData = buildJSON();  // 返回模拟的 JSON 数据
+            // 直接使用 buildJSON() 返回伪数据
+            NSData *newData = buildJSON();  // 这里是你自己构造的伪数据
 
             NSLog(@"[Hook] ✅ 返回模拟数据");
 
-            // 模拟返回数据
+            // 模拟回传，传入 newData
             dispatch_async(dispatch_get_main_queue(), ^{
-                %orig(session, (NSURLSessionDataTask *)task, nil);  // 表示没有错误
+                // 返回伪数据，传入 nil 表示没有错误
+                %orig(session, (NSURLSessionDataTask *)task, newData);
             });
 
             // 清除缓存
@@ -84,7 +81,7 @@ didCompleteWithError:(NSError *)error {
         }
     }
 
-    // 正常完成
+    // 如果没有特殊处理，继续正常处理
     %orig(session, task, error);
 }
 
