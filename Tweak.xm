@@ -50,29 +50,7 @@ BOOL isTarget(NSURLRequest *req) {
 
 %end
 
-#pragma mark - CFNetwork / NSURLConnection Hook
-%hook NSURLConnection
 
-+ (instancetype)sendSynchronousRequest:(NSURLRequest *)request
-                      returningResponse:(NSURLResponse **)response
-                                  error:(NSError **)error {
-    if (isTarget(request)) {
-        [[FloatingLogView sharedInstance] log:@"🎯 拦截 NSURLConnection URL: %@", request.URL.absoluteString];
-        NSString *jsonStr = @"{\"code\":0,\"message\":\"请求成功\",\"success\":true,\"data\":{}}";
-        NSData *fakeData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
-
-        if (response) {
-            *response = [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                                      statusCode:200
-                                                     HTTPVersion:@"HTTP/1.1"
-                                                    headerFields:@{@"Content-Type":@"application/json"}];
-        }
-        return fakeData;
-    }
-    return %orig(request, response, error);
-}
-
-%end
 
 #pragma mark - 启动 UI
 %ctor {
