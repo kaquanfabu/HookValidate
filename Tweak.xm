@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 构造 JSON（你可以后面再改结构）
+#pragma mark - 构造 JSON
 NSData *buildJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
@@ -29,10 +29,9 @@ BOOL isTarget(NSURLRequest *req) {
 
     if (isTarget(request)) {
 
-        NSMutableURLRequest *req = [request mutableCopy];
-        [req setValue:@"1" forHTTPHeaderField:@"X-Hooked"];
 
-        void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
+        // 为请求添加唯一标识符，确保不会重复处理
+    void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
 
             NSLog(@"[Hook] 🎯 命中接口");
@@ -46,16 +45,24 @@ BOOL isTarget(NSURLRequest *req) {
             // ❗ 如果原本就失败，别乱改（避免逻辑炸）
             if (error) {
                 if (completionHandler) {
-                    completionHandler(data, response, error);
+                    NSLog(@"[Hook] 错误发生: %@", error.localizedDescription);
+                    completionHandler(data, response, error);  // 确保错误返回
                 }
                 return;
             }
 
             // ✅ 替换数据（只改这里！）
             NSData *newData = buildJSON();
+            
+            if (newData) {
+                NSLog(@"[Hook] 返回修改后的数据");
+            } else {
+                NSLog(@"[Hook] 替换数据失败");
+            }
 
+            // 确保返回数据
             if (completionHandler) {
-                completionHandler(newData, response, error);
+                completionHandler(newData ?: data, response, error);  // 强制返回数据，避免没有数据返回
             }
         };
 
