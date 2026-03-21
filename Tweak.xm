@@ -1,7 +1,5 @@
 #import <Foundation/Foundation.h>
 
-static NSMutableDictionary *dataMap;
-
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
@@ -76,8 +74,8 @@ didCompleteWithError:(NSError *)error {
 
             // 模拟回传
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 调用完成回调
-                %orig(session, (NSURLSessionDataTask *)task, newData);
+                // 这里传递 nil 给 NSError * 参数
+                %orig(session, (NSURLSessionDataTask *)task, nil);
             });
 
             // 清除缓存
@@ -86,6 +84,7 @@ didCompleteWithError:(NSError *)error {
         }
     }
 
+    // 如果没有特殊处理，继续正常处理
     %orig(session, task, error);
 }
 
