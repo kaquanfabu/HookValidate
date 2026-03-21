@@ -73,10 +73,12 @@ didCompleteWithError:(NSError *)error {
 
             NSLog(@"[Hook] ✅ 返回模拟数据");
 
-            // 模拟回传，传入 newData
+            // 直接返回模拟数据，不调用原方法
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 使用 newData 作为返回的数据，nil 作为错误对象表示成功
-                %orig(session, (NSURLSessionDataTask *)task, newData, nil);
+                // 模拟回传数据，直接用 newData 替代原始数据
+                // 不调用 %orig，因为我们需要绕过原始完成方法
+                // 这里使用默认的错误对象（nil），表示成功
+                [task.response URLSession:session task:task didCompleteWithError:nil];
             });
 
             // 清除缓存
