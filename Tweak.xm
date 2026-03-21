@@ -38,8 +38,18 @@ BOOL isTarget(NSURLRequest *req) {
                 return;
             }
 
-            // 直接替换返回数据，不需要转义字符
-            NSString *modifiedResponse = @"{"sing": null, "data": null, "code": 0, "message": "请求成功", "success": true, "skey": null, "timestamp": 1773899566825}";
+            // 直接替换返回数据
+            NSString *modifiedResponse = @"{ \
+                \"sing\" : null, \
+                \"data\" : { \
+                    \"validateItem\" : \"0,1,2,3,4\" \
+                }, \
+                \"code\" : 0, \
+                \"message\" : \"请求成功\", \
+                \"success\" : true, \
+                \"skey\" : null, \
+                \"timestamp\" : 1774093881179 \
+            }";
             NSData *newData = [modifiedResponse dataUsingEncoding:NSUTF8StringEncoding];
 
             // 打印修改后的数据
