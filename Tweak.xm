@@ -79,10 +79,14 @@ didCompleteWithError:(NSError *)error {
                 NSURLResponse *response = task.response;
                 NSError *completionError = nil;
 
-                // 模拟完成回调
-                void (^completionHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+                // 使用 __block 来修饰 completionHandler 使其可以被 block 捕获
+                __block void (^completionHandler)(NSData *data, NSURLResponse *response, NSError *error);
+
+                // 定义 block
+                completionHandler = ^(NSData *data, NSURLResponse *response, NSError *error) {
                     // 使用 newData 作为模拟的返回数据
                     data = newData;
+                    // 调用 completionHandler 返回模拟数据
                     completionHandler(data, response, completionError); // 传递模拟数据
                 };
 
