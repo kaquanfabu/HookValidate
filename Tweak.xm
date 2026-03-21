@@ -75,8 +75,8 @@ didCompleteWithError:(NSError *)error {
 
             // 模拟回传，传入 newData
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 这里传递 nil 给 NSError * 参数，表示没有错误，表示成功
-                %orig(session, (NSURLSessionDataTask *)task, nil);
+                // 使用 newData 作为返回的数据，nil 作为错误对象表示成功
+                %orig(session, (NSURLSessionDataTask *)task, newData, nil);
             });
 
             // 清除缓存
