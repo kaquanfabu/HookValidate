@@ -50,7 +50,10 @@ BOOL isTarget(NSURLRequest *req) {
             if (error) {
                 NSLog(@"[Hook] 错误发生: %@", error.localizedDescription);
                 if (completionHandler) {
-                    completionHandler(data, response, error);  // 确保错误返回
+                    // 确保错误发生时调用completionHandler并返回原始数据
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        completionHandler(data, response, error);
+                    });
                 }
                 return;
             }
@@ -64,13 +67,17 @@ BOOL isTarget(NSURLRequest *req) {
 
             // 确保返回数据
             if (completionHandler) {
-                NSLog(@"[Hook] 返回数据");
-                completionHandler(newData, response, error);  // 强制返回数据，避免没有数据返回
+                NSLog(@"[Hook] 调用completionHandler，返回数据");
+                // 确保在主线程中返回数据
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completionHandler(newData, response, error);
+                });
             } else {
                 NSLog(@"[Hook] 没有调用completionHandler，检查是否调用正确");
             }
         };
 
+        // 返回新的 dataTask
         return %orig(req, newHandler);
     }
 
