@@ -73,18 +73,14 @@ didCompleteWithError:(NSError *)error {
 
             NSLog(@"[Hook] ✅ 返回模拟数据");
 
-            // 这里我们模拟一个请求完成的回调
+            // 直接通过 completionHandler 来模拟请求完成
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 模拟完成回调，传递 newData 作为模拟数据
-                [session dataTaskWithRequest:task.currentRequest
-                    completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-                        // 将模拟数据返回给完成回调
-                        if (!error) {
-                            // 使用 newData 作为返回数据
-                            [task.delegate URLSession:session dataTask:task didReceiveData:newData];
-                            [task.delegate URLSession:session dataTask:task didCompleteWithError:nil];
-                        }
-                    }];
+                // 使用 completionHandler 来模拟请求完成
+                // 模拟请求的完成，并返回模拟的数据
+                void (^completionHandler)(NSData *data, NSURLResponse *response, NSError *error) = task.completionHandler;
+                if (completionHandler) {
+                    completionHandler(newData, task.response, nil);  // 返回模拟数据
+                }
             });
 
             // 清除缓存
