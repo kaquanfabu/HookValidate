@@ -1,7 +1,5 @@
 #import <Foundation/Foundation.h>
 
-static NSMutableDictionary *dataMap;
-
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
