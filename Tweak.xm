@@ -9,44 +9,33 @@ BOOL isTarget(NSURLRequest *req) {
 
 #pragma mark - 伪造响应数据
 NSData *createMockData() {
-    // 使用紧凑格式，去掉多余空格和换行
-    // 修正后的 Hook 代码
-NSString *modifiedResponseStr = "{\"sing\":null,\"data\":null,\"code\":0,\"message\":\"请求成功\",\"success\":true,\"skey\":null,\"timestamp\":1773899566825}";
-
-// 将字符串转换为 NSData
-NSData *modifiedResponseData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
-
-// 调用原始方法或直接返回修改后的数据
-// ...
-";
+    // 修复 1: 加上 @ 前缀，使用紧凑 JSON，data 设为空字典 {} 防止崩溃
+    NSString *jsonStr = @"{\"sing\":null,\"data\":{},\"code\":0,\"message\":\"请求成功\",\"success\":true,\"skey\":null,\"timestamp\":1773899566825}";
     return [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
 }
 
 %hook NSURLSession
 
-// ==================== Hook 1: 处理 POST 请求 (关键修复) ====================
+// ==================== Hook POST 请求 ====================
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                                    uploadData:(NSData *)bodyData
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (isTarget(request)) {
         NSLog(@"[Hook] 🎯 命中 POST 接口: %@", request.URL.absoluteString);
 
-        // 构造伪造数据
+        // 获取伪造数据
         NSData *mockData = createMockData();
 
-        // 打印原始和伪造数据
-        NSString *origStr = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
-        NSLog(@"[Hook] 📄 原始请求体: %@", origStr);
-        NSLog(@"[Hook] 🔓 伪造响应数据: %@", [[NSString alloc] initWithData:mockData encoding:NSUTF8StringEncoding]);
-
-        // 模拟异步返回
+        // 模拟异步返回 (延迟 0.5 秒)
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            completionHandler(mockData, [NSHTTPURLResponse new], nil);
+            // 直接调用回调返回数据，response 和 error 传 nil
+            if (completionHandler) {
+                completionHandler(mockData, nil, nil);
+            }
         });
 
-        // 创建并返回一个空的 Task，防止崩溃
-        NSURLSessionDataTask *task = [NSURLSessionDataTask new];
-        [task resume];
+        // 修复 2: 使用 alloc/init 代替 new，避免 iOS 13+ 废弃警告
+        NSURLSessionDataTask *task = [[NSURLSessionDataTask alloc] init];
         return task;
     }
 
@@ -54,23 +43,24 @@ NSData *modifiedResponseData = [modifiedResponseStr dataUsingEncoding:NSUTF8Stri
     return %orig(request, bodyData, completionHandler);
 }
 
-// ==================== Hook 2: 处理 GET 请求 (备用) ====================
+// ==================== Hook GET 请求 ====================
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (isTarget(request)) {
         NSLog(@"[Hook] 🎯 命中 GET 接口: %@", request.URL.absoluteString);
 
-        // 构造伪造数据
+        // 获取伪造数据
         NSData *mockData = createMockData();
 
         // 模拟异步返回
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            completionHandler(mockData, [NSHTTPURLResponse new], nil);
+            if (completionHandler) {
+                completionHandler(mockData, nil, nil);
+            }
         });
 
-        // 创建并返回一个空的 Task，防止崩溃
-        NSURLSessionDataTask *task = [NSURLSessionDataTask new];
-        [task resume];
+        // 修复 2: 使用 alloc/init
+        NSURLSessionDataTask *task = [[NSURLSessionDataTask alloc] init];
         return task;
     }
 
