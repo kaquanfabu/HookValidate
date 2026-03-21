@@ -9,23 +9,22 @@ BOOL isTarget(NSURLRequest *req) {
     return [urlString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
 }
 
-%hook NSURLSession
+%hook%hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
-    // 1. 判断是否命中目标接口
+    // 1. 判断是否命中目标
     if (isTarget(request)) {
         NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
 
-        // 2. 创建新的处理回调 (用来替换原始回调)
+        // 2. 定义我们自己的回调处理逻辑
         void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
         ^(NSData *data, NSURLResponse *response, NSError *error) {
             
             // --- 错误处理 ---
-            // 如果请求本身出错，直接回调原始数据，不进行篡改
             if (error) {
-                NSLog(@"[Hook] ⚠️ 请求发生错误，返回原始错误信息: %@", error);
+                NSLog(@"[Hook] ⚠️ 请求出错，直接返回原始错误");
                 if (completionHandler) {
                     completionHandler(data, response, error);
                 }
@@ -35,7 +34,7 @@ BOOL isTarget(NSURLRequest *req) {
             // --- 打印原始数据 ---
             if (data) {
                 NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                NSLog(@"[Hook] 📄 原始返回数据: %@", str);
+                NSLog(@"[Hook] 📄 原始返回: %@", str);
             }
 
             // --- 构造伪造数据 ---
@@ -52,29 +51,36 @@ BOOL isTarget(NSURLRequest *req) {
             }";
             NSData *newData = [modifiedResponseStr dataUsingEncoding:NSUTF8StringEncoding];
 
-            // 主线程打印修改后的数据（仅用于调试查看）
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSLog(@"[Hook] 🔓 修改后的返回: %@", modifiedResponseStr);
             });
 
-            // --- 返回伪造数据 ---
-            // 将伪造的 newData 传给原本的 completionHandler
+            // --- 执行原始回调，但传入伪造的数据 ---
             if (completionHandler) {
                 completionHandler(newData, response, error);
             }
         };
 
-        // 3. 【关键修复】使用 %orig 执行原始请求，但传入我们的 newHandler
-        // 这样既发起了真实的网络请求，又避免了重新创建 Task 导致的无限递归
+        // ================= 核心修复区域 =================
+        
+        // 1. 调用 %orig 执行原始的网络请求逻辑，传入新的回调，并**接收返回的 Task 对象**
+        // 注意：必须用 id 或 NSURLSessionDataTask * 接收返回值
         NSURLSessionDataTask *task = %orig(request, newHandler);
         
-        // 4. 启动任务
-        [task resume];
+        // 2. 必须手动调用 resume，因为原始任务创建后是暂停状态
+        if (task) {
+            [task resume];
+        } else {
+            NSLog(@"[Hook] ❌ 任务创建失败，task 为 nil");
+        }
 
+        // 3. **必须返回** 这个 task 对象给调用者
         return task;
+        
+        // ==============================================
     }
 
-    // 5. 如果未命中目标，直接执行原始逻辑
+    // 如果没有命中目标，直接执行原始逻辑并返回
     return %orig(request, completionHandler);
 }
 
