@@ -1,9 +1,9 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 构造 JSON
-static NSData *buildJSON() {
-    long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+static NSMutableDictionary *dataMap;
 
+#pragma mark - 构造返回 JSON
+static NSData *buildJSON() {
     NSDictionary *obj = @{
         @"sing": [NSNull null],
         @"data": [NSNull null],
@@ -11,71 +11,79 @@ static NSData *buildJSON() {
         @"message": @"请求成功",
         @"success": @YES,
         @"skey": [NSNull null],
-        @"timestamp": @(ts)
+        @"timestamp": @1773899566825
     };
 
     return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
 }
 
-#pragma mark - 判断目标请求
-static BOOL isTarget(NSURLRequest *req) {
-    if (!req.URL) return NO;
-    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
+%hook SessionDelegate
+
+// 初始化缓存
+- (instancetype)init {
+    self = %orig;
+    if (self) {
+        dataMap = [NSMutableDictionary dictionary];
+    }
+    return self;
 }
 
-%hook NSURLSession
+#pragma mark - 收包（拦截数据流）
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)task
+    didReceiveData:(NSData *)data {
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    NSString *url = task.currentRequest.URL.absoluteString;
 
-    // 目标请求判断
-    if (!isTarget(request)) {
-        return %orig(request, completionHandler);
+    if (url && [url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
+
+        NSNumber *key = @((uintptr_t)task);
+
+        NSMutableData *cache = dataMap[key];
+        if (!cache) {
+            cache = [NSMutableData data];
+            dataMap[key] = cache;
+        }
+
+        [cache appendData:data];
+
+        // ❗ 拦截，不让原数据往下走
+        return;
     }
 
-    NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
-    NSLog(@"[Hook] 请求头: %@", request.allHTTPHeaderFields);
+    %orig(session, task, data);
+}
 
-    // ✅ 保存原始 completionHandler
-    void (^origHandler)(NSData *, NSURLResponse *, NSError *) = completionHandler;
+#pragma mark - 请求完成（在这里改返回）
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+didCompleteWithError:(NSError *)error {
 
-    // ✅ 创建新的 completionHandler
-    void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
-    ^(NSData *data, NSURLResponse *response, NSError *error) {
+    NSString *url = task.currentRequest.URL.absoluteString;
 
-        NSLog(@"[Hook] 原始回调触发");
+    if (url && [url containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"]) {
 
-        // 如果发生错误，直接返回原数据
-        if (error) {
-            NSLog(@"[Hook] 错误: %@", error.localizedDescription);
-            if (origHandler) origHandler(data, response, error);
+        NSNumber *key = @((uintptr_t)task);
+        NSMutableData *cache = dataMap[key];
+
+        if (cache) {
+
+            NSString *origin = [[NSString alloc] initWithData:cache encoding:NSUTF8StringEncoding];
+            NSLog(@"[Hook] 原始返回: %@", origin);
+
+            NSData *newData = buildJSON();
+
+            NSLog(@"[Hook] ✅ 已替换返回");
+
+            // ✅ 关键：把“假数据”喂回 Alamofire
+            %orig(session, (NSURLSessionDataTask *)task, newData);
+
+            [dataMap removeObjectForKey:key];
             return;
         }
+    }
 
-        // 打印原始返回数据（调试用）
-        if (data) {
-            NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            NSLog(@"[Hook] 原始返回: %@", str);
-        }
-
-        // ✅ 替换返回数据
-        NSData *newData = buildJSON();
-        if (!newData) {
-            newData = data; // 如果替换失败，回退到原始数据
-        }
-
-        NSLog(@"[Hook] ✅ 返回伪造 JSON");
-
-        // 调用原始 completionHandler，返回修改后的数据
-        if (origHandler) {
-            origHandler(newData, response, error);
-        }
-    };
-
-    // ✅ 调用原始 dataTask，使用新的 completionHandler
-    NSURLSessionDataTask *task = %orig(request, newHandler);
-
-    return task;
+    %orig(session, task, error);
 }
 
 %end
