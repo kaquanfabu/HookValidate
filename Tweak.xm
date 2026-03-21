@@ -1,17 +1,50 @@
 #import <Foundation/Foundation.h>
+#import <zlib.h>
 
-#pragma mark - 构造 JSON（你可以后面再改结构）
-NSData *buildJSON() {
+#pragma mark - Gzip 压缩
+NSData *gzipCompress(NSData *data) {
+    if (!data || data.length == 0) return data;
+
+    z_stream strm;
+    memset(&strm, 0, sizeof(strm));
+
+    if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        return nil;
+
+    NSMutableData *compressed = [NSMutableData dataWithLength:16384];
+
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (uInt)data.length;
+
+    int status;
+    do {
+        if (strm.total_out >= compressed.length)
+            compressed.length += 16384;
+
+        strm.next_out = (Bytef *)compressed.mutableBytes + strm.total_out;
+        strm.avail_out = (uInt)(compressed.length - strm.total_out);
+
+        status = deflate(&strm, Z_FINISH);
+
+    } while (status == Z_OK);
+
+    deflateEnd(&strm);
+
+    if (status != Z_STREAM_END) return nil;
+
+    compressed.length = strm.total_out;
+    return compressed;
+}
+
+#pragma mark - 构造 JSON 并 Gzip 压缩
+NSData *buildAndCompressJSON() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
 
     NSDictionary *obj = @{
         @"sing": [NSNull null],
-
-        // ✅ 关键修复：data 不再是 null
         @"data": @{
             @"validateItem": @"0"
         },
-
         @"code": @0,
         @"message": @"请求成功",
         @"success": @YES,
@@ -19,14 +52,14 @@ NSData *buildJSON() {
         @"timestamp": @(ts)
     };
 
-    return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+    // 将字典转为 JSON 数据
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+
+    // 使用 gzip 压缩 JSON 数据
+    return gzipCompress(jsonData);
 }
 
-#pragma mark - 判断目标请求
-BOOL isTarget(NSURLRequest *req) {
-    return [req.URL.absoluteString containsString:@"wap.jx.10086.cn/nwgt/web/api/v1/menu/validate"];
-}
-
+#pragma mark - 返回的 JSON 响应（带 Gzip 压缩）
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -34,7 +67,7 @@ BOOL isTarget(NSURLRequest *req) {
 
     if (isTarget(request)) {
 
-        // ✅ 防递归
+        // 防止递归调用
         if ([request valueForHTTPHeaderField:@"X-Hooked"]) {
             return %orig(request, completionHandler);
         }
@@ -47,13 +80,7 @@ BOOL isTarget(NSURLRequest *req) {
 
             NSLog(@"[Hook] 🎯 命中接口");
 
-            // ✅ 打印原始返回（用于你后面对比结构）
-            if (data) {
-                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                NSLog(@"[Hook] 原始返回: %@", str);
-            }
-
-            // ❗ 如果原本就失败，别乱改（避免逻辑炸）
+            // 如果有错误，原样返回
             if (error) {
                 if (completionHandler) {
                     completionHandler(data, response, error);
@@ -61,11 +88,23 @@ BOOL isTarget(NSURLRequest *req) {
                 return;
             }
 
-            // ✅ 替换数据（只改这里！）
-            NSData *newData = buildJSON();
+            // 获取并压缩 JSON 数据
+            NSData *compressedData = buildAndCompressJSON();
+
+            // 设置压缩后的数据和响应头
+            NSDictionary *headers = @{
+                @"Content-Type": @"application/json;charset=UTF-8",
+                @"Content-Encoding": @"gzip"
+            };
+
+            NSHTTPURLResponse *resp =
+            [[NSHTTPURLResponse alloc] initWithURL:request.URL
+                                        statusCode:200
+                                       HTTPVersion:@"HTTP/1.1"
+                                      headerFields:headers];
 
             if (completionHandler) {
-                completionHandler(newData, response, error);
+                completionHandler(compressedData, resp, nil);
             }
         };
 
