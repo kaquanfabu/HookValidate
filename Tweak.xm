@@ -28,48 +28,54 @@ static BOOL isTarget(NSURLRequest *req) {
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
 
-    // 非目标请求直接放行
+    // 目标请求判断
     if (!isTarget(request)) {
         return %orig(request, completionHandler);
     }
 
     NSLog(@"[Hook] 🎯 命中接口: %@", request.URL.absoluteString);
+    NSLog(@"[Hook] 请求头: %@", request.allHTTPHeaderFields);
 
-    // ✅ 关键：先保存原始 handler
+    // ✅ 保存原始 completionHandler
     void (^origHandler)(NSData *, NSURLResponse *, NSError *) = completionHandler;
 
-    // ✅ 新 handler（只处理返回，不阻塞请求）
+    // ✅ 创建新的 completionHandler
     void (^newHandler)(NSData *, NSURLResponse *, NSError *) =
     ^(NSData *data, NSURLResponse *response, NSError *error) {
 
         NSLog(@"[Hook] 原始回调触发");
 
-        // 出错直接返回原数据
+        // 如果发生错误，直接返回原数据
         if (error) {
-            NSLog(@"[Hook] 错误: %@", error);
+            NSLog(@"[Hook] 错误: %@", error.localizedDescription);
             if (origHandler) origHandler(data, response, error);
             return;
         }
 
-        // 打印原始数据（调试用）
+        // 打印原始返回数据（调试用）
         if (data) {
             NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             NSLog(@"[Hook] 原始返回: %@", str);
         }
 
-        // ✅ 替换返回
+        // ✅ 替换返回数据
         NSData *newData = buildJSON();
-        if (!newData) newData = data;
+        if (!newData) {
+            newData = data; // 如果替换失败，回退到原始数据
+        }
 
-        NSLog(@"[Hook] ✅ 返回伪造数据");
+        NSLog(@"[Hook] ✅ 返回伪造 JSON");
 
+        // 调用原始 completionHandler，返回修改后的数据
         if (origHandler) {
             origHandler(newData, response, error);
         }
     };
 
-    // ✅ 关键：调用原始方法（不会阻塞网络）
-    return %orig(request, newHandler);
+    // ✅ 调用原始 dataTask，使用新的 completionHandler
+    NSURLSessionDataTask *task = %orig(request, newHandler);
+
+    return task;
 }
 
 %end
