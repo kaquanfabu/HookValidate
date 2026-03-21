@@ -39,7 +39,6 @@ BOOL isTarget(NSURLRequest *req) {
 
             NSDictionary *headers = @{
                 @"Content-Type": @"application/json;charset=UTF-8"
-                // ❌ 不要 gzip
             };
 
             NSHTTPURLResponse *resp =
@@ -48,7 +47,6 @@ BOOL isTarget(NSURLRequest *req) {
                                        HTTPVersion:@"HTTP/1.1"
                                       headerFields:headers];
 
-            // ✅ 直接回调，不切线程
             completionHandler(json, resp, nil);
         };
 
@@ -58,10 +56,7 @@ BOOL isTarget(NSURLRequest *req) {
     return %orig(request, completionHandler);
 }
 
-%end
-
-#pragma mark - SSL 绕过
-%hook NSURLSession
+#pragma mark - SSL 绕过（必须写在同一个 hook 里）
 
 - (void)URLSession:(NSURLSession *)session
 didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
