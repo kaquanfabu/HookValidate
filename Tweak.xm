@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <objc/message.h> // 引入运行时头文件
 
 #pragma mark - 判断目标请求
 BOOL isTarget(NSURLRequest *req) {
@@ -9,7 +10,7 @@ BOOL isTarget(NSURLRequest *req) {
 
 #pragma mark - 伪造响应数据
 NSData *createMockData() {
-    // 修复 1: 加上 @ 前缀，使用紧凑 JSON，data 设为空字典 {} 防止崩溃
+    // 紧凑 JSON，data 设为空字典 {} 防止 App 解析崩溃
     NSString *jsonStr = @"{\"sing\":null,\"data\":{},\"code\":0,\"message\":\"请求成功\",\"success\":true,\"skey\":null,\"timestamp\":1773899566825}";
     return [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
 }
@@ -28,14 +29,13 @@ NSData *createMockData() {
 
         // 模拟异步返回 (延迟 0.5 秒)
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            // 直接调用回调返回数据，response 和 error 传 nil
             if (completionHandler) {
                 completionHandler(mockData, nil, nil);
             }
         });
 
-        // 修复 2: 使用 alloc/init 代替 new，避免 iOS 13+ 废弃警告
-        NSURLSessionDataTask *task = [[NSURLSessionDataTask alloc] init];
+        // 修复报错：使用 objc_msgSend 绕过 iOS 13+ 对 init 的废弃限制
+        NSURLSessionDataTask *task = (NSURLSessionDataTask *)objc_msgSend([NSURLSessionDataTask class], @selector(init));
         return task;
     }
 
@@ -59,8 +59,8 @@ NSData *createMockData() {
             }
         });
 
-        // 修复 2: 使用 alloc/init
-        NSURLSessionDataTask *task = [[NSURLSessionDataTask alloc] init];
+        // 修复报错：使用 objc_msgSend
+        NSURLSessionDataTask *task = (NSURLSessionDataTask *)objc_msgSend([NSURLSessionDataTask class], @selector(init));
         return task;
     }
 
