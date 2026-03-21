@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import "FloatingLogView.h"
+#import "Resources/FloatingLogView.h"
 
 #pragma mark - URL 匹配函数
 BOOL isTarget(NSURLRequest *req) {
