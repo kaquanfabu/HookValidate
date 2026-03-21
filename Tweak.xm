@@ -53,11 +53,8 @@ BOOL isTarget(NSURLRequest *req) {
                 NSLog(@"[Hook] 🔓 拦截并修改返回: %@", jsonStr);
             });
 
-            // --- 5. 调用回调 ---
-            // 传入新的 Response 和新的 Data
-            if (completionHandler) {
                 completionHandler(fakeData, newResponse, nil);
-            }
+            
         };
 
         // --- 6. 执行原始逻辑 ---
