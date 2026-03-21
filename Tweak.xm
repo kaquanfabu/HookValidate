@@ -1,18 +1,15 @@
 #import <Foundation/Foundation.h>
 
-#pragma mark - 声明并初始化 dataMap
-static NSMutableDictionary *dataMap;  // 声明全局缓存变量
-
 #pragma mark - 构造返回 JSON
 static NSData *buildJSON() {
     NSDictionary *obj = @{
-        @"sing": [NSNull null],
-        @"data": [NSNull null],
-        @"code": @0,
-        @"message": @"请求成功",
-        @"success": @YES,
-        @"skey": [NSNull null],
-        @"timestamp": @1773899566825
+        @"sing": [NSNull null], 
+        @"data": @{ @"validateItem": @"0,1,2,3,4" },  // 模拟 validateItem 数据
+        @"code": @0,  // 状态码 0 表示成功
+        @"message": @"请求成功",  // 请求成功的消息
+        @"success": @YES,  // 请求是否成功
+        @"skey": [NSNull null], 
+        @"timestamp": @1774086299586  // 时间戳
     };
 
     return [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
@@ -28,7 +25,7 @@ static NSData *buildJSON() {
     return self;
 }
 
-#pragma mark - 收包（分段接收）
+#pragma mark - 收包（没有分段，直接接收完整数据）
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)task
     didReceiveData:(NSData *)data {
@@ -45,7 +42,7 @@ static NSData *buildJSON() {
             dataMap[key] = cache;
         }
 
-        // 缓存每次接收到的分段数据
+        // 缓存接收到的数据
         [cache appendData:data];
 
         // ❗ 不让原数据往下走
@@ -55,7 +52,7 @@ static NSData *buildJSON() {
     %orig(session, task, data);
 }
 
-#pragma mark - 请求完成（拼接数据并返回）
+#pragma mark - 请求完成（直接返回模拟的 JSON 数据）
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error {
@@ -67,18 +64,14 @@ didCompleteWithError:(NSError *)error {
         NSMutableData *cache = dataMap[key];
 
         if (cache) {
-            NSString *origin = [[NSString alloc] initWithData:cache encoding:NSUTF8StringEncoding];
-            NSLog(@"[Hook] 原始返回: %@", origin);
+            // 拼接数据（但因为没有分段，这里其实没有必要拼接）
+            NSData *newData = buildJSON();  // 构造伪数据
 
-            // 拼接所有的分段数据
-            NSData *newData = buildJSON();  // 这里是你自己构造的伪数据
+            NSLog(@"[Hook] ✅ 返回模拟数据");
 
-            NSLog(@"[Hook] ✅ 拼接并替换返回");
-
-            // 模拟回传
+            // 模拟返回数据
             dispatch_async(dispatch_get_main_queue(), ^{
-                // 这里传递 nil 给 NSError * 参数
-                %orig(session, (NSURLSessionDataTask *)task, nil);  // 这里传递 nil 表示没有错误，表示成功
+                %orig(session, (NSURLSessionDataTask *)task, nil);  // 表示没有错误
             });
 
             // 清除缓存
@@ -87,7 +80,7 @@ didCompleteWithError:(NSError *)error {
         }
     }
 
-    // 如果没有特殊处理，继续正常处理
+    // 正常完成
     %orig(session, task, error);
 }
 
