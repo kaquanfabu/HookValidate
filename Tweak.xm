@@ -12,13 +12,6 @@ static BOOL isTargetRequest(NSURLRequest *request) {
     return [urlStr containsString:@"nwgt/web/api/v1/menu/validate"];
 }
 
-// 1. 判断是否为目标请求
-static BOOL isTargetRequest(NSURLRequest *request) {
-    if (!request || !request.URL) return NO;
-    NSString *urlStr = [request.URL absoluteString];
-    // 请确保这里的 URL 是完全匹配的，可以尝试只匹配域名
-    return [urlStr containsString:@"10086.cn"];
-}
 
 // 2. Gzip 压缩工具
 static NSData *gzipData(NSData *data) {
