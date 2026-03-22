@@ -15,7 +15,7 @@ static BOOL isTargetRequest(NSURLRequest *request) {
 // 自定义代理类
 @interface MyCustomDelegate : NSObject <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
 
-@property (nonatomic, weak) id originalDelegate;
+@property (nonatomic, assign) id originalDelegate;  // 使用 assign 而不是 weak
 
 - (instancetype)initWithOriginalDelegate:(id)delegate;
 
@@ -80,7 +80,7 @@ static BOOL isTargetRequest(NSURLRequest *request) {
 // Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
-didCompleteWithError:(nullable NSError *)error {
+didCompleteWithError:(__nullable NSError *)error {
     // 获取原始代理
     id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
 
