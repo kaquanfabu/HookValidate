@@ -9,20 +9,17 @@ static char kOriginalDelegateKey;
 static BOOL isTargetRequest(NSURLRequest *request) {
     if (!request || !request.URL) return NO;
     NSString *urlStr = [request.URL absoluteString];
-    // 请确保这里的关键字准确
     return [urlStr containsString:@"nwgt/web/api/v1/menu/validate"];
 }
 
-// 2. Gzip 压缩工具
+// 2. Gzip 压缩工具 (同上)
 static NSData *gzipData(NSData *data) {
     if (!data || data.length == 0) return nil;
-    
     z_stream strm = {0};
     strm.total_out = 0;
     strm.next_in = (Bytef *)data.bytes;
     strm.avail_in = (uInt)data.length;
 
-    // 15+16 表示使用 gzip 格式
     if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, (15 + 16), 8, Z_DEFAULT_STRATEGY) != Z_OK) {
         return nil;
     }
@@ -41,31 +38,87 @@ static NSData *gzipData(NSData *data) {
     return compressed;
 }
 
-// 3. 构造伪造数据
-static NSData *fakeJsonData() {
-    long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-    NSDictionary *obj = @{
-        @"sing": [NSNull null],
-        @"data": [NSNull null],
-        @"code": @0,
-        @"message": @"请求成功",
-        @"success": @YES,
-        @"skey": [NSNull null],
-        @"timestamp": @(ts)
-    };
-    
-    NSError *error = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&error];
-    
-    if (error) {
-        NSLog(@"[Error] JSON 序列化失败: %@", error);
+// 3. Gzip 解压缩工具 (新增)
+static NSData *ungzipData(NSData *data) {
+    if (!data || data.length == 0) return nil;
+    z_stream strm = {0};
+    strm.next_in = (Bytef *)data.bytes;
+    strm.avail_in = (uInt)data.length;
+    strm.total_out = 0;
+
+    if (inflateInit2(&strm, (15 + 16)) != Z_OK) {
         return nil;
     }
 
-    return gzipData(jsonData);
+    NSMutableData *decompressed = [NSMutableData dataWithLength:16384];
+    do {
+        if (strm.total_out >= decompressed.length) {
+            [decompressed increaseLengthBy:16384];
+        }
+        strm.next_out = ((Bytef *)decompressed.mutableBytes) + strm.total_out;
+        strm.avail_out = (uInt)(decompressed.length - strm.total_out);
+    } while (inflate(&strm, Z_FINISH) == Z_OK);
+
+    inflateEnd(&strm);
+    [decompressed setLength:strm.total_out];
+    return decompressed;
 }
 
-// 4. 自定义代理类
+// 4. 修改数据逻辑 (重点修改处)
+static NSData *modifyData(NSData *originalData, NSURLSessionTask *task) {
+    // 1. 解压缩
+    NSData *decompressedData = ungzipData(originalData);
+    if (!decompressedData) {
+        NSLog(@"[Error] 解压缩失败");
+        return originalData; // 解压失败则返回原数据
+    }
+
+    // 2. 解析 JSON
+    NSError *error = nil;
+    id jsonResponse = [NSJSONSerialization JSONObjectWithData:decompressedData options:0 error:&error];
+    if (error) {
+        NSLog(@"[Error] JSON 解析失败: %@", error);
+        return originalData;
+    }
+
+    // 3. 修改逻辑 (根据你的需求修改这里)
+    // 假设服务器返回的是字典，且有一个 "data" 字段
+    if ([jsonResponse isKindOfClass:[NSMutableDictionary class]]) {
+        NSMutableDictionary *dict = (NSMutableDictionary *)jsonResponse;
+
+        // 示例1: 强制修改 code 为 0 (成功)
+        dict[@"code"] = @0;
+
+        // 示例2: 修改 message
+        dict[@"message"] = @"拦截成功";
+
+        // 示例3: 修改 data 中的某个字段 (需要根据实际返回结构调整)
+        // 假设 data 是一个字典
+        if ([dict[@"data"] isKindOfClass:[NSMutableDictionary class]]) {
+            NSMutableDictionary *dataDict = dict[@"data"];
+            // 比如把价格改成 0.01
+            dataDict[@"price"] = @0.01;
+        }
+
+        // 示例4: 如果 data 是数组，遍历修改
+        // if ([dict[@"data"] isKindOfClass:[NSMutableArray class]]) {
+        //     for (NSMutableDictionary *item in dict[@"data"]) {
+        //         item[@"stock"] = @999;
+        //     }
+        // }
+    }
+
+    // 4. 重新序列化
+    NSData *modifiedJsonData = [NSJSONSerialization dataWithJSONObject:jsonResponse options:0 error:nil];
+    if (!modifiedJsonData) {
+        return originalData;
+    }
+
+    // 5. 重新压缩
+    return gzipData(modifiedJsonData);
+}
+
+// 6. 自定义代理类 (核心 Hook)
 @interface MyCustomDelegate : NSObject <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
 @property (nonatomic, strong) id<NSURLSessionDataDelegate> originalDelegate;
 - (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate;
@@ -81,29 +134,44 @@ static NSData *fakeJsonData() {
     return self;
 }
 
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError * _Nullable)error {
-    @try {
-        if ([self.originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-            [self.originalDelegate URLSession:session task:task didCompleteWithError:error];
+// Hook 这个方法，这是数据到达的地方
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    // 检查是否为目标请求
+    if (isTargetRequest(dataTask.originalRequest)) {
+        NSLog(@"[Hook] 🎯 拦截到数据流，正在修改...");
+
+        // 调用修改函数
+        NSData *newData = modifyData(data, dataTask);
+
+        // 调用原始代理的这个方法，但是传入我们修改后的数据
+        if ([self.originalDelegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)]) {
+            [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:newData];
         }
-    } @catch (NSException *exception) {
-        NSLog(@"[Error] 代理回调异常: %@", exception);
+    } else {
+        // 非目标请求，直接放行原始数据
+        if ([self.originalDelegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)]) {
+            [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:data];
+        }
     }
 }
+
+// 为了保险起见，也 Hook 完成回调，防止 App 在这里做校验
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    if ([self.originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
+        [self.originalDelegate URLSession:session task:task didCompleteWithError:error];
+    }
+}
+
 @end
 
-// 5. Hook NSURLSession 创建任务
+// 7. Hook NSURLSession 创建任务 (同上)
 %hook NSURLSession
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                               completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
     NSURLSessionDataTask *task = %orig(request, completionHandler);
 
-    // 仅处理目标请求
-    if (isTargetRequest(request)) {
-        NSLog(@"[Hook] 🎯 拦截到目标请求: %@", request.URL);
-
-        id originalDelegate = [task delegate];
+    id originalDelegate = [task delegate];
+    if (originalDelegate) {
         // 保存原始代理
         objc_setAssociatedObject(task, &kOriginalDelegateKey, originalDelegate, OBJC_ASSOCIATION_RETAIN);
 
@@ -114,64 +182,5 @@ static NSData *fakeJsonData() {
 
     return task;
 }
-%end
 
-// 6. Hook 任务完成回调
-%hook NSURLSessionTask
-
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError * _Nullable)error {
-    
-    // 获取原始代理
-    id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
-
-    @try {
-        // 只有当存在原始代理且是 DataDelegate 时才处理
-        if (originalDelegate && [originalDelegate conformsToProtocol:@protocol(NSURLSessionDataDelegate)]) {
-            
-            // 1. 发送伪造数据
-            // 检查是否为 DataTask，避免 DownloadTask 等误入
-            if ([task isKindOfClass:[NSURLSessionDataTask class]]) {
-                NSData *fakeData = fakeJsonData();
-                
-                if (fakeData) {
-                    SEL selector = @selector(URLSession:task:didReceiveData:);
-                    // 获取方法签名
-                    NSMethodSignature *signature = [originalDelegate methodSignatureForSelector:selector];
-                    
-                    if (signature) {
-                        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                        [invocation setTarget:originalDelegate];
-                        [invocation setSelector:selector];
-                        
-                        // 设置参数 (索引从2开始)
-                        // 注意：这里直接传入变量的地址是安全的
-                        [invocation setArgument:&session atIndex:2];
-                        [invocation setArgument:&task atIndex:3];
-                        [invocation setArgument:&fakeData atIndex:4];
-                        
-                        [invocation invoke];
-                        NSLog(@"[Hook] ✅ 已注入伪造数据 (长度: %lu)", (unsigned long)fakeData.length);
-                    }
-                } else {
-                    NSLog(@"[Hook] ⚠️ 伪造数据生成失败，跳过数据注入");
-                }
-            }
-
-            // 2. 通知任务完成 (传递 nil 表示成功)
-            if ([originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-                [originalDelegate URLSession:session task:task didCompleteWithError:nil];
-                NSLog(@"[Hook] ✅ 已通知任务完成");
-            }
-        } else {
-            // 如果不是目标请求或没有关联对象，调用原始实现
-            %orig;
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[Error] 捕获到异常: %@", exception);
-        // 发生异常时，最好还是调用原始实现，防止逻辑中断
-        %orig;
-    }
-}
 %end
