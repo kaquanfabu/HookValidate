@@ -68,15 +68,15 @@ static NSData *fakeJsonData() {
 // 自定义代理类
 @interface MyCustomDelegate : NSObject <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
 
-@property (nonatomic, strong) id originalDelegate;  // 使用 strong 来避免野指针问题
+@property (nonatomic, strong) id<NSURLSessionDataDelegate> originalDelegate;  // 强制指定代理类型为 NSURLSessionDataDelegate
 
-- (instancetype)initWithOriginalDelegate:(id)delegate;
+- (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate;
 
 @end
 
 @implementation MyCustomDelegate
 
-- (instancetype)initWithOriginalDelegate:(id)delegate {
+- (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate {
     self = [super init];
     if (self) {
         _originalDelegate = delegate;
@@ -128,7 +128,6 @@ static NSData *fakeJsonData() {
 %end
 
 // Hook NSURLSessionTask 的代理方法
-
 %hook NSURLSessionTask
 
 // Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
@@ -136,7 +135,7 @@ static NSData *fakeJsonData() {
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError * _Nullable)error {
     // 获取原始代理
-    id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
+    id<NSURLSessionDataDelegate> originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
 
     // 构造伪造的数据
     NSData *fakeData = fakeJsonData();  // 返回伪造的 JSON 数据
@@ -151,7 +150,7 @@ didCompleteWithError:(NSError * _Nullable)error {
         // 确保原始代理实现了 didReceiveData 方法
         if ([originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
             // 显式转换 originalDelegate 类型
-            [(id<NSURLSessionDataDelegate>)originalDelegate URLSession:session task:task didReceiveData:fakeData];
+            [originalDelegate URLSession:session task:task didReceiveData:fakeData];
         } else {
             NSLog(@"[Warning] 原始代理未实现 didReceiveData: 方法");
         }
