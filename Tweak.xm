@@ -68,7 +68,7 @@ static NSData *fakeJsonData() {
 // 自定义代理类
 @interface MyCustomDelegate : NSObject <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
 
-@property (nonatomic, strong) id<NSURLSessionDataDelegate> originalDelegate;  // 强制指定代理类型为 NSURLSessionDataDelegate
+@property (nonatomic, strong) id<NSURLSessionDataDelegate> originalDelegate;
 
 - (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate;
 
@@ -130,7 +130,7 @@ static NSData *fakeJsonData() {
 // Hook NSURLSessionTask 的代理方法
 %hook NSURLSessionTask
 
-// Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
+// Hook 任务完成的方法
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError * _Nullable)error {
@@ -138,22 +138,24 @@ didCompleteWithError:(NSError * _Nullable)error {
     id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
 
     // 构造伪造的数据
-    NSData *fakeData = fakeJsonData();  // 返回伪造的 JSON 数据
+    NSData *fakeData = fakeJsonData();
 
-    // 使用 @try-catch 块来捕获异常
     @try {
-        // 调用原始代理的 didCompleteWithError 方法，传递 nil 错误
-        if ([originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-            [originalDelegate URLSession:session task:task didCompleteWithError:nil];
-        }
-
-        // 确保 originalDelegate 确实是 NSURLSessionDataDelegate 类型并响应 didReceiveData:
+        // 1. 先调用 didReceiveData 发送数据
         if ([originalDelegate conformsToProtocol:@protocol(NSURLSessionDataDelegate)] &&
             [originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
-            // 显式转换 originalDelegate 类型为 NSURLSessionDataDelegate
-            [(id<NSURLSessionDataDelegate>)originalDelegate URLSession:session task:task didReceiveData:fakeData];
-        } else {
-            NSLog(@"[Warning] 原始代理未实现 didReceiveData: 方法");
+            
+            // 使用 performSelector 避免编译错误 "instance method not found"
+            // 这告诉编译器忽略类型检查，直接发送消息
+            [originalDelegate performSelector:@selector(URLSession:task:didReceiveData:)
+                                   withObject:session
+                                   withObject:task
+                                   withObject:fakeData];
+        }
+
+        // 2. 再调用 didCompleteWithError 标记结束（传递 nil 表示成功）
+        if ([originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
+            [originalDelegate URLSession:session task:task didCompleteWithError:nil];
         }
     }
     @catch (NSException *exception) {
