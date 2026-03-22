@@ -27,7 +27,8 @@ static NSData *gzipData(NSData *data) {
         if (strm.total_out >= compressed.length)
             [compressed increaseLengthBy:16384];
 
-        strm.next_out = (Bytef *)(compressed.mutableBytes + strm.total_out);
+        // ⚠️ 修复：先转 Bytef* 再加偏移
+        strm.next_out = ((Bytef *)compressed.mutableBytes) + strm.total_out;
         strm.avail_out = (uInt)(compressed.length - strm.total_out);
 
         ret = deflate(&strm, Z_FINISH);
@@ -38,7 +39,6 @@ static NSData *gzipData(NSData *data) {
     [compressed setLength:strm.total_out];
     return compressed;
 }
-
 // 构造原始接口 JSON 并 Gzip
 static NSData *fakeGzipData() {
     long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
