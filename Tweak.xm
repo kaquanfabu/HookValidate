@@ -305,7 +305,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                               completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+                               completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
     if (isTargetRequest(request) && completionHandler) {
         return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
             NSData *fakeData = getFakeJsonData();
