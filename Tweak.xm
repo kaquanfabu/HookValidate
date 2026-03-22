@@ -32,7 +32,7 @@ static BOOL isTargetRequest(NSURLRequest *request) {
 }
 
 // 处理任务完成的代理方法
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError * _Nullable)error {
     // 获取原始代理并调用原始代理方法
     @try {
         if ([self.originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
@@ -80,7 +80,7 @@ static BOOL isTargetRequest(NSURLRequest *request) {
 // Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
-didCompleteWithError:(__nullable NSError *)error {
+didCompleteWithError:(NSError * _Nullable)error {
     // 获取原始代理
     id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
 
