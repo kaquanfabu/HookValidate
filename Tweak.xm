@@ -128,6 +128,7 @@ static NSData *fakeJsonData() {
 %end
 
 // Hook NSURLSessionTask 的代理方法
+%hook// Hook NSURLSessionTask 的代理方法
 %hook NSURLSessionTask
 
 // Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
@@ -149,8 +150,8 @@ didCompleteWithError:(NSError * _Nullable)error {
 
         // 确保原始代理实现了 didReceiveData 方法
         if ([originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
-            // 注入伪造的数据
-            [originalDelegate URLSession:session task:task didReceiveData:fakeData];
+            // 显式转换 originalDelegate 类型
+            [(id<NSURLSessionDataDelegate>)originalDelegate URLSession:session task:task didReceiveData:fakeData];
         } else {
             NSLog(@"[Warning] 原始代理未实现 didReceiveData: 方法");
         }
