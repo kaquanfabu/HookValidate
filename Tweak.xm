@@ -12,7 +12,15 @@ static BOOL isTargetRequest(NSURLRequest *request) {
     return [urlStr containsString:@"nwgt/web/api/v1/menu/validate"];
 }
 
-// 2. Gzip 压缩工具 (同上)
+// 1. 判断是否为目标请求
+static BOOL isTargetRequest(NSURLRequest *request) {
+    if (!request || !request.URL) return NO;
+    NSString *urlStr = [request.URL absoluteString];
+    // 请确保这里的 URL 是完全匹配的，可以尝试只匹配域名
+    return [urlStr containsString:@"10086.cn"];
+}
+
+// 2. Gzip 压缩工具
 static NSData *gzipData(NSData *data) {
     if (!data || data.length == 0) return nil;
     z_stream strm = {0};
@@ -38,94 +46,33 @@ static NSData *gzipData(NSData *data) {
     return compressed;
 }
 
-// 3. Gzip 解压缩工具 (新增)
-static NSData *ungzipData(NSData *data) {
-    if (!data || data.length == 0) return nil;
-    z_stream strm = {0};
-    strm.next_in = (Bytef *)data.bytes;
-    strm.avail_in = (uInt)data.length;
-    strm.total_out = 0;
+// 3. 构造伪造数据 (保持简单，只改 code 和 message)
+static NSData *fakeJsonData() {
+    long long ts = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+    NSDictionary *obj = @{
+        @"code": @0,
+        @"message": @"请求成功 (Hooked)",
+        @"success": @YES,
+        @"data": [NSNull null] // 确保 data 字段存在，避免 App 崩溃
+    };
 
-    if (inflateInit2(&strm, (15 + 16)) != Z_OK) {
+    NSError *error = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&error];
+    if (error) {
+        NSLog(@"[Error] JSON 序列化失败: %@", error);
         return nil;
     }
 
-    NSMutableData *decompressed = [NSMutableData dataWithLength:16384];
-    do {
-        if (strm.total_out >= decompressed.length) {
-            [decompressed increaseLengthBy:16384];
-        }
-        strm.next_out = ((Bytef *)decompressed.mutableBytes) + strm.total_out;
-        strm.avail_out = (uInt)(decompressed.length - strm.total_out);
-    } while (inflate(&strm, Z_FINISH) == Z_OK);
-
-    inflateEnd(&strm);
-    [decompressed setLength:strm.total_out];
-    return decompressed;
+    return gzipData(jsonData);
 }
 
-// 4. 修改数据逻辑 (重点修改处)
-static NSData *modifyData(NSData *originalData, NSURLSessionTask *task) {
-    // 1. 解压缩
-    NSData *decompressedData = ungzipData(originalData);
-    if (!decompressedData) {
-        NSLog(@"[Error] 解压缩失败");
-        return originalData; // 解压失败则返回原数据
-    }
-
-    // 2. 解析 JSON
-    NSError *error = nil;
-    id jsonResponse = [NSJSONSerialization JSONObjectWithData:decompressedData options:0 error:&error];
-    if (error) {
-        NSLog(@"[Error] JSON 解析失败: %@", error);
-        return originalData;
-    }
-
-    // 3. 修改逻辑 (根据你的需求修改这里)
-    // 假设服务器返回的是字典，且有一个 "data" 字段
-    if ([jsonResponse isKindOfClass:[NSMutableDictionary class]]) {
-        NSMutableDictionary *dict = (NSMutableDictionary *)jsonResponse;
-
-        // 示例1: 强制修改 code 为 0 (成功)
-        dict[@"code"] = @0;
-
-        // 示例2: 修改 message
-        dict[@"message"] = @"拦截成功";
-
-        // 示例3: 修改 data 中的某个字段 (需要根据实际返回结构调整)
-        // 假设 data 是一个字典
-        if ([dict[@"data"] isKindOfClass:[NSMutableDictionary class]]) {
-            NSMutableDictionary *dataDict = dict[@"data"];
-            // 比如把价格改成 0.01
-            dataDict[@"price"] = @0.01;
-        }
-
-        // 示例4: 如果 data 是数组，遍历修改
-        // if ([dict[@"data"] isKindOfClass:[NSMutableArray class]]) {
-        //     for (NSMutableDictionary *item in dict[@"data"]) {
-        //         item[@"stock"] = @999;
-        //     }
-        // }
-    }
-
-    // 4. 重新序列化
-    NSData *modifiedJsonData = [NSJSONSerialization dataWithJSONObject:jsonResponse options:0 error:nil];
-    if (!modifiedJsonData) {
-        return originalData;
-    }
-
-    // 5. 重新压缩
-    return gzipData(modifiedJsonData);
-}
-
-// 6. 自定义代理类 (核心 Hook)
-@interface MyCustomDelegate : NSObject <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
+// 4. 自定义代理类 (同上)
+@interface MyCustomDelegate : NSObject <NSURLSessionDataDelegate>
 @property (nonatomic, strong) id<NSURLSessionDataDelegate> originalDelegate;
 - (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate;
 @end
 
 @implementation MyCustomDelegate
-
 - (instancetype)initWithOriginalDelegate:(id<NSURLSessionDataDelegate>)delegate {
     self = [super init];
     if (self) {
@@ -134,53 +81,76 @@ static NSData *modifyData(NSData *originalData, NSURLSessionTask *task) {
     return self;
 }
 
-// Hook 这个方法，这是数据到达的地方
+// 拦截 didReceiveData
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
-    // 检查是否为目标请求
+    // 检查是否是目标请求
     if (isTargetRequest(dataTask.originalRequest)) {
-        NSLog(@"[Hook] 🎯 拦截到数据流，正在修改...");
+        NSLog(@"[Hook] ✅ 拦截到数据传输: %@", dataTask.originalRequest.URL);
 
-        // 调用修改函数
-        NSData *newData = modifyData(data, dataTask);
-
-        // 调用原始代理的这个方法，但是传入我们修改后的数据
-        if ([self.originalDelegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)]) {
-            [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:newData];
+        // 发送伪造数据
+        NSData *fakeData = fakeJsonData();
+        if (fakeData) {
+            // 调用原始代理的 didReceiveData，传递伪造的数据
+            if ([self.originalDelegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)]) {
+                [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:fakeData];
+            }
         }
     } else {
-        // 非目标请求，直接放行原始数据
+        // 非目标请求，调用原始逻辑
         if ([self.originalDelegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)]) {
             [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:data];
         }
     }
 }
 
-// 为了保险起见，也 Hook 完成回调，防止 App 在这里做校验
+// 拦截任务完成
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if ([self.originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-        [self.originalDelegate URLSession:session task:task didCompleteWithError:error];
+        // 传递 nil 错误，表示任务成功完成
+        [self.originalDelegate URLSession:session task:task didCompleteWithError:nil];
     }
 }
-
 @end
 
-// 7. Hook NSURLSession 创建任务 (同上)
+// 5. Hook Session 的初始化 (关键点!)
 %hook NSURLSession
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
-    NSURLSessionDataTask *task = %orig(request, completionHandler);
-
-    id originalDelegate = [task delegate];
+// Hook 无参数初始化
+- (instancetype)init {
+    id session = %orig;
+    // 保存原始 Delegate 并替换
+    id originalDelegate = [session delegate];
     if (originalDelegate) {
-        // 保存原始代理
-        objc_setAssociatedObject(task, &kOriginalDelegateKey, originalDelegate, OBJC_ASSOCIATION_RETAIN);
-
-        // 替换代理
         MyCustomDelegate *customDelegate = [[MyCustomDelegate alloc] initWithOriginalDelegate:originalDelegate];
-        [task setDelegate:customDelegate];
+        [session setDelegate:customDelegate];
     }
-
-    return task;
+    return session;
 }
 
+// Hook 带配置的初始化 (更常见)
+- (instancetype)initWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
+    id session = %orig(configuration, delegate, queue);
+    if (delegate) {
+        MyCustomDelegate *customDelegate = [[MyCustomDelegate alloc] initWithOriginalDelegate:delegate];
+        return %new(session, configuration, customDelegate, queue); // 这里需要根据实际情况调整，或者直接在内部替换
+    }
+    return session;
+}
+%end
+
+// 6. Hook Task 的初始化 (双重保险)
+%hook NSURLSessionTask
+
+- (void)setDelegate:(id<NSURLSessionTaskDelegate>)delegate {
+    // 保存原始 Delegate
+    objc_setAssociatedObject(self, &kOriginalDelegateKey, delegate, OBJC_ASSOCIATION_RETAIN);
+    // 替换为自定义 Delegate
+    MyCustomDelegate *customDelegate = [[MyCustomDelegate alloc] initWithOriginalDelegate:delegate];
+    %orig(customDelegate);
+}
+
+- (id<NSURLSessionTaskDelegate>)delegate {
+    id<NSURLSessionTaskDelegate> del = %orig;
+    return del;
+}
 %end
