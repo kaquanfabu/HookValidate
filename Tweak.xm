@@ -142,16 +142,20 @@ didCompleteWithError:(NSError * _Nullable)error {
 
     // 使用 @try-catch 块来捕获异常
     @try {
+        // 调用原始代理的 didCompleteWithError 方法，传递 nil 错误
         if ([originalDelegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)]) {
-            // 调用原始代理的 didCompleteWithError 方法，传递 nil 错误
             [originalDelegate URLSession:session task:task didCompleteWithError:nil];
+        }
+
+        // 确保原始代理实现了 didReceiveData 方法
+        if ([originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
             // 注入伪造的数据
             [originalDelegate URLSession:session task:task didReceiveData:fakeData];
+        } else {
+            NSLog(@"[Warning] 原始代理未实现 didReceiveData: 方法");
         }
     }
     @catch (NSException *exception) {
         NSLog(@"[Error] 捕获到异常: %@", exception);
     }
 }
-
-%end
