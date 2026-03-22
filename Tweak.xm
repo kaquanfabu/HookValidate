@@ -3,10 +3,11 @@
 #import <zlib.h>
 
 // ==================== 常量定义 ====================
-static const void *kIsTargetTaskKey = &kIsTargetTaskKey;
-static const void *kFakeDataHandledKey = &kFakeDataHandledKey;
+static NSString * const kIsTargetTaskKey = @"FakeResponse_IsTargetTask";
+static NSString * const kFakeDataHandledKey = @"FakeResponse_Handled";
+static NSString * const kDelegateWrappedKey = @"FakeResponse_DelegateWrapped";
 static const NSInteger kSuccessStatusCode = 200;
-static NSString *const kTargetPath = @"nwgt/web/api/v1/menu/validate";
+static NSString * const kTargetPath = @"nwgt/web/api/v1/menu/validate";
 
 // ==================== 工具函数 ====================
 
@@ -211,8 +212,10 @@ static NSData *getFakeJsonData() {
 }
 
 - (void)dealloc {
+    if (_syncQueue) {
+        dispatch_release(_syncQueue);
+    }
 #if !__has_feature(objc_arc)
-    dispatch_release(_syncQueue);
     [super dealloc];
 #endif
 }
@@ -447,7 +450,7 @@ willPerformHTTPRedirection:(NSHTTPURLResponse *)response
 #if DEBUG
         NSLog(@"[Hook] 🎯 标记目标任务: %@", request.URL);
 #endif
-        objc_setAssociatedObject(task, kIsTargetTaskKey, @YES, OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject(task, (__bridge const void *)kIsTargetTaskKey, @YES, OBJC_ASSOCIATION_RETAIN);
     }
     
     return task;
