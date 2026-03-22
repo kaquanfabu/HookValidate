@@ -128,7 +128,7 @@ static NSData *fakeJsonData() {
 %end
 
 // Hook NSURLSessionTask 的代理方法
-%hook// Hook NSURLSessionTask 的代理方法
+
 %hook NSURLSessionTask
 
 // Hook 任务完成的方法（这是 Delegate 模式中最常见的回调）
