@@ -135,7 +135,7 @@ static NSData *fakeJsonData() {
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError * _Nullable)error {
     // 获取原始代理
-    id<NSURLSessionDataDelegate> originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
+    id originalDelegate = objc_getAssociatedObject(task, &kOriginalDelegateKey);
 
     // 构造伪造的数据
     NSData *fakeData = fakeJsonData();  // 返回伪造的 JSON 数据
@@ -147,8 +147,9 @@ didCompleteWithError:(NSError * _Nullable)error {
             [originalDelegate URLSession:session task:task didCompleteWithError:nil];
         }
 
-        // 确保原始代理实现了 didReceiveData 方法
-        if ([originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
+        // 确保 originalDelegate 确实是 NSURLSessionDataDelegate 类型并响应 didReceiveData:
+        if ([originalDelegate conformsToProtocol:@protocol(NSURLSessionDataDelegate)] &&
+            [originalDelegate respondsToSelector:@selector(URLSession:task:didReceiveData:)]) {
             // 显式转换 originalDelegate 类型为 NSURLSessionDataDelegate
             [(id<NSURLSessionDataDelegate>)originalDelegate URLSession:session task:task didReceiveData:fakeData];
         } else {
