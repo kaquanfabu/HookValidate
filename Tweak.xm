@@ -212,10 +212,12 @@ static NSData *getFakeJsonData() {
 }
 
 - (void)dealloc {
+    // ARC 环境下不需要手动 release dispatch queue
+    // 非 ARC 环境需要释放
+#if !__has_feature(objc_arc)
     if (_syncQueue) {
         dispatch_release(_syncQueue);
     }
-#if !__has_feature(objc_arc)
     [super dealloc];
 #endif
 }
@@ -430,9 +432,6 @@ willPerformHTTPRedirection:(NSHTTPURLResponse *)response
                 [wrappedSessions addObject:sessionKey];
 #if DEBUG
                 NSLog(@"[Hook] ✅ 已包装 session delegate");
-#endif
-#if !__has_feature(objc_arc)
-                [wrapper release];
 #endif
                 return;
             }
